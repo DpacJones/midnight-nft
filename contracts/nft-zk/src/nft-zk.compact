@@ -1,0 +1,77 @@
+// This file is part of midnightntwrk/example-nft-contracts.
+// Copyright (C) Midnight Foundation
+// SPDX-License-Identifier: Apache-2.0
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+pragma language_version >= 0.22.0;
+
+import CompactStandardLibrary;
+import "./modules/NftZk";
+
+// Export selected circuits from the NftZk module.
+// 'burn' and 'mint' are not exported here as they have no authorization checks.
+// Add your own authorization wrapper around them as needed.
+export {
+  balanceOf,
+  ownerOf,
+  approve,
+  getApproved,
+  setApprovalForAll,
+  isApprovedForAll,
+  transfer,
+  transferFrom,
+  generateHashKey
+};
+
+// Admin uses a keypair pattern. The deployer's DApp generates the private key,
+// stores it in private state, and the contract derives the matching public key
+// to store on the ledger. The deployer's wallet identity is never recorded,
+// preserving the privacy posture of NFT-ZK end-to-end. The admin key is kept
+// separate from the per-user local/shared secrets so the admin role and
+// ownership identity remain independent.
+struct AdminSecretKey { bytes: Bytes<32>; }
+struct AdminPublicKey { bytes: Bytes<32>; }
+
+export ledger contractAdmin: AdminPublicKey;
+
+witness getAdminSecret(): AdminSecretKey;
+
+constructor() {
+  contractAdmin = disclose(deriveAdminPublicKey(getAdminSecret()));
+}
+
+export circuit deriveAdminPublicKey(sk: AdminSecretKey): AdminPublicKey {
+  return AdminPublicKey {
+    bytes: persistentHash<Vector<2, Bytes<32>>>([pad(32, "nftzk:admin:pk:v1"), sk.bytes])
+  };
+}
+
+export circuit mintAdmin(to: ZswapCoinPublicKey, tokenId: Uint<64>): [] {
+  assert(contractAdmin == deriveAdminPublicKey(getAdminSecret()), "Not authorized to mint.");
+  mint(to, tokenId);
+}
+
+export circuit burnAdmin(tokenId: Uint<64>): [] {
+  assert(contractAdmin == deriveAdminPublicKey(getAdminSecret()), "Not authorized to burn.");
+  const tokenOwnerHashKey = ownerOf(tokenId);
+  burn(tokenOwnerHashKey, tokenId);
+}
+
+// Replace the admin key. The current admin proves authority, then the ledger
+// is updated to the new public key. The new admin generates their private key
+// locally and only shares the derived public key, so private keys never leave
+// the device that generated them.
+export circuit rotateAdmin(newAdmin: AdminPublicKey): [] {
+  assert(contractAdmin == deriveAdminPublicKey(getAdminSecret()), "Not authorized to rotate admin.");
+  contractAdmin = disclose(newAdmin);
+}

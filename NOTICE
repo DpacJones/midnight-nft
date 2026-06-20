@@ -1,0 +1,19 @@
+midnight-nft
+============
+
+This project VENDORS privacy-preserving NFT contracts from:
+
+  midnightntwrk/example-nft-contracts
+  https://github.com/midnightntwrk/example-nft-contracts
+  Commit:  f38641f13f2968fe0601c8c8dcbed4edfc56b1cf
+  Copyright (C) Midnight Foundation
+  Licensed under the Apache License, Version 2.0 (see LICENSE)
+
+Vendored on 2026-06-20. The vendored Compact sources retain their original
+`SPDX-License-Identifier: Apache-2.0` headers. Files under contracts/ may be
+modified from the originals; modifications are likewise released under
+Apache-2.0.
+
+Upstream license note: the upstream contracts/*/CONTRACT.md docs state
+"GPL-3.0" in prose, but every source-file SPDX header AND the repository
+LICENSE are Apache-2.0 — which governs. (Inconsistency reported upstream.)
