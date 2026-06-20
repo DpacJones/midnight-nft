@@ -1,24 +1,10 @@
-// This file is part of midnightntwrk/example-nft-contracts.
-// Copyright (C) Midnight Foundation
-// SPDX-License-Identifier: Apache-2.0
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-// http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
+// Multi-party simulator for the claim-model NftZk. SPDX-License-Identifier: Apache-2.0
 import {
   type CircuitContext,
   sampleContractAddress,
   createConstructorContext,
   createCircuitContext,
-  type CoinPublicKey
+  type ContractAddress
 } from "@midnight-ntwrk/compact-runtime";
 import {
   Contract,
@@ -31,173 +17,167 @@ import {
   createNftZkPrivateState,
   witnesses
 } from "../witnesses.js";
-import { fromHex, isHex } from "@midnight-ntwrk/midnight-js-utils";
+import { fromHex } from "@midnight-ntwrk/midnight-js-utils";
 import { TextEncoder } from "util";
+
+const ADMIN_SECRET = strBytes("the_real_admin_secret");
+const DUMMY_SECRET = strBytes("not_the_admin");
+
+export type User = {
+  name: string;
+  pubkey: string; // hex CoinPublicKey
+  localSecret: Uint8Array;
+  claimSalt: Uint8Array;
+};
+
+function strBytes(str: string): Uint8Array {
+  const encoded = new TextEncoder().encode(str);
+  const bytes = new Uint8Array(32);
+  bytes.set(encoded.slice(0, 32));
+  return bytes;
+}
+
+function pubkeyHex(name: string): string {
+  const encoded = new TextEncoder().encode(name);
+  const hex: string[] = [];
+  for (let i = 0; i < 32; i++) {
+    const byte =
+      i < encoded.length
+        ? encoded[i]
+        : (name.charCodeAt(i % name.length) + i) % 256;
+    hex.push(byte.toString(16).padStart(2, "0"));
+  }
+  return hex.join("");
+}
+
+export function makeUser(name: string): User {
+  return {
+    name,
+    pubkey: pubkeyHex(name),
+    localSecret: strBytes(name + ":local"),
+    claimSalt: strBytes(name + ":salt")
+  };
+}
+
+function pkBytes(user: User): Uint8Array {
+  const bytes = fromHex(user.pubkey.padStart(64, "0"));
+  const out = new Uint8Array(32);
+  out.set(bytes.slice(0, 32));
+  return out;
+}
+
+export function toHex(b: Uint8Array): string {
+  return Array.from(b)
+    .map((x) => x.toString(16).padStart(2, "0"))
+    .join("");
+}
 
 export class NftZkSimulator {
   readonly contract: Contract<NftZkPrivateState>;
   circuitContext: CircuitContext<NftZkPrivateState>;
+  readonly address: ContractAddress;
+  readonly admin: User;
 
-  constructor() {
+  constructor(admin: User) {
+    this.admin = admin;
     this.contract = new Contract<NftZkPrivateState>(witnesses);
-    const {
-      currentPrivateState,
-      currentContractState,
-      currentZswapLocalState
-    } = this.contract.initialState(
+    this.address = sampleContractAddress();
+    const init = this.contract.initialState(
       createConstructorContext(
-        createNftZkPrivateState(
-          this.stringToBytes("my_local_secret").bytes,
-          this.stringToBytes("my_shared_secret").bytes,
-          this.stringToBytes("my_admin_secret_key").bytes
-        ),
-        this.createPublicKey("Alice")
+        createNftZkPrivateState(admin.localSecret, admin.claimSalt, ADMIN_SECRET),
+        admin.pubkey
       )
     );
     this.circuitContext = createCircuitContext(
-      sampleContractAddress(),
-      currentZswapLocalState,
-      currentContractState,
-      currentPrivateState
+      this.address,
+      admin.pubkey,
+      init.currentContractState,
+      init.currentPrivateState
     );
   }
 
-  public getLedger(): Ledger {
+  // Rebuild the context to act AS `user`, preserving current on-chain state.
+  private as(user: User, isAdmin = false): void {
+    const ps = createNftZkPrivateState(
+      user.localSecret,
+      user.claimSalt,
+      isAdmin ? ADMIN_SECRET : DUMMY_SECRET
+    );
+    this.circuitContext = createCircuitContext(
+      this.address,
+      user.pubkey,
+      this.circuitContext.currentQueryContext.state,
+      ps
+    );
+  }
+
+  getLedger(): Ledger {
     return ledger(this.circuitContext.currentQueryContext.state);
   }
 
-  public getLocalSecret(): Uint8Array {
-    return this.circuitContext.currentPrivateState.local_secret;
+  // --- off-chain commitment helpers (what a recipient/owner computes locally) ---
+  claimCommitment(user: User): Uint8Array {
+    return pureCircuits.commitClaim(pkBytes(user), user.claimSalt);
+  }
+  claimCommitmentWithSalt(user: User, salt: Uint8Array): Uint8Array {
+    return pureCircuits.commitClaim(pkBytes(user), salt);
+  }
+  ownerCommitment(user: User): Uint8Array {
+    return pureCircuits.commitOwner(pkBytes(user), user.localSecret);
   }
 
-  public getSharedSecret(): Uint8Array {
-    return this.circuitContext.currentPrivateState.shared_secret;
-  }
-
-  public balanceOf(owner: CoinPublicKey): bigint {
-    return this.contract.circuits.balanceOf(
-      this.circuitContext,
-      this.publicKeyToBytes(owner)
-    ).result;
-  }
-
-  public ownerOf(tokenId: bigint): bigint {
-    return this.contract.circuits.ownerOf(this.circuitContext, tokenId).result;
-  }
-
-  public approve(to: CoinPublicKey, tokenId: bigint): void {
-    this.circuitContext = this.contract.impureCircuits.approve(
-      this.circuitContext,
-      this.publicKeyToBytes(to),
-      tokenId
-    ).context;
-  }
-
-  public getApproved(tokenId: bigint): bigint {
-    return this.contract.circuits.getApproved(this.circuitContext, tokenId)
-      .result;
-  }
-
-  public setApprovalForAll(operator: CoinPublicKey, approved: boolean): void {
-    this.circuitContext = this.contract.impureCircuits.setApprovalForAll(
-      this.circuitContext,
-      this.publicKeyToBytes(operator),
-      approved
-    ).context;
-  }
-
-  public isApprovedForAll(
-    ownerHashKey: bigint,
-    operatorHashKey: bigint
-  ): boolean {
-    return this.contract.circuits.isApprovedForAll(
-      this.circuitContext,
-      ownerHashKey,
-      operatorHashKey
-    ).result;
-  }
-
-  public transfer(to: CoinPublicKey, tokenId: bigint): void {
-    this.circuitContext = this.contract.impureCircuits.transfer(
-      this.circuitContext,
-      this.publicKeyToBytes(to),
-      tokenId
-    ).context;
-  }
-
-  public transferFrom(
-    fromHashKey: bigint,
-    to: CoinPublicKey,
-    tokenId: bigint
-  ): void {
-    this.circuitContext = this.contract.impureCircuits.transferFrom(
-      this.circuitContext,
-      fromHashKey,
-      this.publicKeyToBytes(to),
-      tokenId
-    ).context;
-  }
-
-  public mintAdmin(to: CoinPublicKey, tokenId: bigint): void {
+  // --- writes (impure) ---
+  mintAdmin(claimCommitment: Uint8Array, tokenId: bigint): void {
+    this.as(this.admin, true);
     this.circuitContext = this.contract.impureCircuits.mintAdmin(
       this.circuitContext,
-      this.publicKeyToBytes(to),
+      claimCommitment,
       tokenId
     ).context;
   }
-
-  public burnAdmin(tokenId: bigint): void {
-    this.circuitContext = this.contract.impureCircuits.burnAdmin(
+  mintAdminAs(actor: User, claimCommitment: Uint8Array, tokenId: bigint): void {
+    this.as(actor, false); // non-admin actor -> should be rejected by the contract
+    this.circuitContext = this.contract.impureCircuits.mintAdmin(
+      this.circuitContext,
+      claimCommitment,
+      tokenId
+    ).context;
+  }
+  release(owner: User, tokenId: bigint, claimCommitment: Uint8Array): void {
+    this.as(owner);
+    this.circuitContext = this.contract.impureCircuits.release(
+      this.circuitContext,
+      tokenId,
+      claimCommitment
+    ).context;
+  }
+  claim(recipient: User, tokenId: bigint): void {
+    this.as(recipient);
+    this.circuitContext = this.contract.impureCircuits.claim(
+      this.circuitContext,
+      tokenId
+    ).context;
+  }
+  burn(owner: User, tokenId: bigint): void {
+    this.as(owner);
+    this.circuitContext = this.contract.impureCircuits.burn(
       this.circuitContext,
       tokenId
     ).context;
   }
 
-  public createPublicKey(userName: string): CoinPublicKey {
-    const encoded = new TextEncoder().encode(userName);
-    const hexChars: string[] = [];
-    for (let i = 0; i < 32; i++) {
-      const byte =
-        i < encoded.length
-          ? encoded[i]
-          : (userName.charCodeAt(i % userName.length) + i) % 256;
-      hexChars.push(byte.toString(16).padStart(2, "0"));
-    }
-    return hexChars.join("") as CoinPublicKey;
+  // --- reads ---
+  ownerOf(tokenId: bigint): Uint8Array {
+    return this.contract.circuits.ownerOf(this.circuitContext, tokenId).result;
   }
-
-  public stringToBytes(str: string): { bytes: Uint8Array } {
-    const encoded = new TextEncoder().encode(str);
-    const bytes = new Uint8Array(32);
-    bytes.set(encoded.slice(0, 32));
-    return { bytes };
+  pendingOf(tokenId: bigint): Uint8Array {
+    return this.contract.circuits.pendingOf(this.circuitContext, tokenId).result;
   }
-
-  public publicKeyToBytes(publicKey: CoinPublicKey): { bytes: Uint8Array } {
-    if (isHex(publicKey)) {
-      const bytes = fromHex(publicKey.padStart(64, "0"));
-      const result = new Uint8Array(32);
-      result.set(bytes.slice(0, 32));
-      return { bytes: result };
-    }
-    return this.stringToBytes(publicKey);
+  tokenExists(tokenId: bigint): boolean {
+    return this.contract.circuits.tokenExists(this.circuitContext, tokenId).result;
   }
-
-  public generateHashKey(publicKey: Uint8Array, secret: Uint8Array): bigint {
-    return pureCircuits.generateHashKey(publicKey, secret);
-  }
-
-  public generateLocalUserHashKey(publicKey: CoinPublicKey): bigint {
-    return this.generateHashKey(
-      this.publicKeyToBytes(publicKey).bytes,
-      this.getLocalSecret()
-    );
-  }
-
-  public generateSharedUserHashKey(publicKey: CoinPublicKey): bigint {
-    return this.generateHashKey(
-      this.publicKeyToBytes(publicKey).bytes,
-      this.getSharedSecret()
-    );
+  balanceOf(user: User): bigint {
+    this.as(user);
+    return this.contract.circuits.balanceOf(this.circuitContext).result;
   }
 }

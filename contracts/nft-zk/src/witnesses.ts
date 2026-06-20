@@ -1,17 +1,5 @@
-// This file is part of midnightntwrk/example-nft-contracts.
-// Copyright (C) Midnight Foundation
-// SPDX-License-Identifier: Apache-2.0
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-// http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// This file is part of midnightntwrk/example-nft-contracts (vendored, Apache-2.0),
+// adapted for the Atlantis `midnight-nft` foundation. SPDX-License-Identifier: Apache-2.0
 
 import {
   Contract as ContractType,
@@ -20,62 +8,47 @@ import {
 } from "../../managed/nft-zk/contract/index.js";
 import { WitnessContext } from "@midnight-ntwrk/compact-runtime";
 
-export type Contract<T, W extends Witnesses<T> = Witnesses<T>> = ContractType<
-  T,
-  W
->;
+export type Contract<T, W extends Witnesses<T> = Witnesses<T>> = ContractType<T, W>;
 
-// Private state for the NFT-ZK contract.
-//
-//   local_secret    : per-user secret for self-operations (NftZk module).
-//   shared_secret   : per-user secret for operations with other parties.
-//   adminSecretKey  : deployer-only private key. The contract derives the
-//                     corresponding public key and stores it on the ledger.
-//                     Kept separate from the per-user secrets so the admin
-//                     role and ownership identity stay independent.
+// Private state for the NFT-ZK contract (claim model).
+//   local_secret   : per-user secret for self-custody (owner commitments).
+//   claim_salt     : per-user secret folded into a claim commitment when receiving.
+//   adminSecretKey : deployer-only key; contract stores only its derived public key.
+//   No shared_secret — that was the de-anonymisation hole this rework removes.
 export type NftZkPrivateState = {
   readonly local_secret: Uint8Array;
-  readonly shared_secret: Uint8Array;
+  readonly claim_salt: Uint8Array;
   readonly adminSecretKey: Uint8Array;
 };
 
 export function createNftZkPrivateState(
   local_secret: Uint8Array,
-  shared_secret: Uint8Array,
+  claim_salt: Uint8Array,
   adminSecretKey: Uint8Array
 ): NftZkPrivateState {
-  return { local_secret, shared_secret, adminSecretKey };
+  return { local_secret, claim_salt, adminSecretKey };
 }
 
 export const witnesses = {
   getLocalSecret: ({
     privateState
-  }: WitnessContext<Ledger, NftZkPrivateState>): [
-    NftZkPrivateState,
-    Uint8Array
-  ] => {
+  }: WitnessContext<Ledger, NftZkPrivateState>): [NftZkPrivateState, Uint8Array] => {
     if (privateState.local_secret) {
       return [privateState, privateState.local_secret];
     }
     throw new Error("No local secret found.");
   },
-  getSharedSecret: ({
+  getClaimSalt: ({
     privateState
-  }: WitnessContext<Ledger, NftZkPrivateState>): [
-    NftZkPrivateState,
-    Uint8Array
-  ] => {
-    if (privateState.shared_secret) {
-      return [privateState, privateState.shared_secret];
+  }: WitnessContext<Ledger, NftZkPrivateState>): [NftZkPrivateState, Uint8Array] => {
+    if (privateState.claim_salt) {
+      return [privateState, privateState.claim_salt];
     }
-    throw new Error("No shared secret found.");
+    throw new Error("No claim salt found.");
   },
   getAdminSecret: ({
     privateState
-  }: WitnessContext<Ledger, NftZkPrivateState>): [
-    NftZkPrivateState,
-    { bytes: Uint8Array }
-  ] => {
+  }: WitnessContext<Ledger, NftZkPrivateState>): [NftZkPrivateState, { bytes: Uint8Array }] => {
     if (privateState.adminSecretKey) {
       return [privateState, { bytes: privateState.adminSecretKey }];
     }
