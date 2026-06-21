@@ -1,4 +1,5 @@
-// Multi-party simulator for the claim-model NftZk. SPDX-License-Identifier: Apache-2.0
+// Multi-party simulator for the claim-model NftZk (v1.1, per-token commitments).
+// SPDX-License-Identifier: Apache-2.0
 import {
   type CircuitContext,
   sampleContractAddress,
@@ -104,7 +105,6 @@ export class NftZkSimulator {
     );
   }
 
-  // Rebuild the context to act AS `user`, preserving current on-chain state.
   private as(user: User, isAdmin = false): void {
     const ps = createNftZkPrivateState(
       user.localSecret,
@@ -123,56 +123,48 @@ export class NftZkSimulator {
     return ledger(this.circuitContext.currentQueryContext.state);
   }
 
-  // --- off-chain commitment helpers ---
+  // --- off-chain commitment helpers (what an owner/recipient computes locally) ---
   claimCommitment(user: User): Uint8Array {
     return pureCircuits.commitClaim(pkBytes(user), user.claimSalt);
   }
   claimCommitmentWithSalt(user: User, salt: Uint8Array): Uint8Array {
     return pureCircuits.commitClaim(pkBytes(user), salt);
   }
-  ownerCommitment(user: User): Uint8Array {
-    return pureCircuits.commitOwner(pkBytes(user), user.localSecret);
+  // Per-token owner commitment — this is exactly the "offline ownership query": an owner
+  // recomputes this locally and matches it against ownerOf(tokenId) on the indexer.
+  ownerCommitment(user: User, tokenId: bigint): Uint8Array {
+    return pureCircuits.commitOwner(pkBytes(user), user.localSecret, tokenId);
   }
 
   // --- writes (impure) ---
   mintAdmin(claimCommitment: Uint8Array, tokenId: bigint, uri: Uint8Array = DEFAULT_URI): void {
     this.as(this.admin, true);
     this.circuitContext = this.contract.impureCircuits.mintAdmin(
-      this.circuitContext,
-      claimCommitment,
-      tokenId,
-      uri
+      this.circuitContext, claimCommitment, tokenId, uri
     ).context;
   }
   mintAdminAs(actor: User, claimCommitment: Uint8Array, tokenId: bigint, uri: Uint8Array = DEFAULT_URI): void {
-    this.as(actor, false); // non-admin actor -> should be rejected by the contract
+    this.as(actor, false);
     this.circuitContext = this.contract.impureCircuits.mintAdmin(
-      this.circuitContext,
-      claimCommitment,
-      tokenId,
-      uri
+      this.circuitContext, claimCommitment, tokenId, uri
     ).context;
   }
   release(owner: User, tokenId: bigint, claimCommitment: Uint8Array): void {
     this.as(owner);
     this.circuitContext = this.contract.impureCircuits.release(
-      this.circuitContext,
-      tokenId,
-      claimCommitment
+      this.circuitContext, tokenId, claimCommitment
     ).context;
   }
   claim(recipient: User, tokenId: bigint): void {
     this.as(recipient);
     this.circuitContext = this.contract.impureCircuits.claim(
-      this.circuitContext,
-      tokenId
+      this.circuitContext, tokenId
     ).context;
   }
   burn(owner: User, tokenId: bigint): void {
     this.as(owner);
     this.circuitContext = this.contract.impureCircuits.burn(
-      this.circuitContext,
-      tokenId
+      this.circuitContext, tokenId
     ).context;
   }
 
@@ -188,9 +180,5 @@ export class NftZkSimulator {
   }
   tokenExists(tokenId: bigint): boolean {
     return this.contract.circuits.tokenExists(this.circuitContext, tokenId).result;
-  }
-  balanceOf(user: User): bigint {
-    this.as(user);
-    return this.contract.circuits.balanceOf(this.circuitContext).result;
   }
 }

@@ -8,6 +8,7 @@ import "./modules/NftZk";
 
 // Self-authorized circuits (caller proves ownership/claim via their own secrets).
 // DO NOT add `mint` here — it is unauthenticated; only admin may mint, via mintAdmin.
+// No on-chain `balanceOf` by design (anti-privacy) — enumerate ownership offline.
 export {
   commitOwner,
   commitClaim,
@@ -15,7 +16,6 @@ export {
   ownerOf,
   pendingOf,
   uriOf,
-  balanceOf,
   release,
   claim,
   burn
@@ -47,7 +47,6 @@ export circuit mintAdmin(claim_commitment: Bytes<32>, tokenId: Uint<64>, uri: By
   mint(claim_commitment, tokenId, uri);
 }
 
-// Rotate the admin key: current admin proves authority, ledger updates to the new pubkey.
 export circuit rotateAdmin(newAdmin: AdminPublicKey): [] {
   assert(contractAdmin == deriveAdminPublicKey(getAdminSecret()), "Not authorized to rotate admin.");
   contractAdmin = disclose(newAdmin);

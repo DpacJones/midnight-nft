@@ -1,30 +1,30 @@
 // This file is part of midnightntwrk/example-nft-contracts (vendored, Apache-2.0),
-// adapted for the Atlantis `midnight-nft` foundation: shared_secret removed; ownership
-// via domain-separated persistentHash commitments; transfers via a two-step
-// release -> claim flow (zero-leakage Option D); per-token metadata URI. Approvals dropped for v1.
+// adapted for the Atlantis `midnight-nft` foundation: shared_secret removed; PER-TOKEN
+// ownership commitments (unlinkable, v1.1); two-step release->claim transfers; per-token
+// metadata URI. No on-chain balance (anti-privacy). Approvals dropped for v1.
 // SPDX-License-Identifier: Apache-2.0
 
 module NftZk {
 
   import CompactStandardLibrary;
 
-  // Owned tokens: tokenId -> owner commitment = persistentHash(["nftzk:owner:v1", pubkey, local_secret]).
+  // Owned tokens: tokenId -> owner commitment = persistentHash(["nftzk:owner:v1", pubkey, local_secret, tokenId]).
+  // tokenId is folded in so a user's tokens get DIFFERENT on-chain commitments (unlinkable).
   export ledger tokenOwner: Map<Uint<64>, Bytes<32>>;
   // In-transit tokens: tokenId -> claim commitment = persistentHash(["nftzk:claim:v1", recipient_pubkey, claim_salt]).
   export ledger pendingClaims: Map<Uint<64>, Bytes<32>>;
-  // Balance keyed by owner commitment (only the owner can derive their own commitment).
-  export ledger ownedTokensCount: Map<Bytes<32>, Counter>;
-  // Per-token metadata URI (public: e.g. ipfs://... pointing to off-chain JSON). Set at mint,
-  // persists through transfers, removed on burn. Metadata is intentionally NOT private.
+  // Per-token metadata URI (public). Set at mint, persists through transfers, removed on burn.
   export ledger tokenUri: Map<Uint<64>, Bytes<64>>;
+  // NOTE: no on-chain balance counter — a stable per-user count key would itself be a
+  // linkability leak. Balance/enumeration is an offline/wallet concern (recompute owner
+  // commitments locally and check against the indexer's public state).
 
-  // Per-user private inputs. No shared secret — that was the de-anonymisation hole.
   export witness getLocalSecret(): Bytes<32>;   // owner's self secret (self-custody)
-  export witness getClaimSalt(): Bytes<32>;     // recipient's per-claim salt
+  export witness getClaimSalt(): Bytes<32>;     // recipient's per-claim salt (use a fresh one per claim)
 
-  // Domain-separated commitments. persistentHash returns Bytes<32>.
-  export pure circuit commitOwner(pk: Bytes<32>, secret: Bytes<32>): Bytes<32> {
-    return persistentHash<Vector<3, Bytes<32>>>([pad(32, "nftzk:owner:v1"), pk, secret]);
+  // Per-token owner commitment (unlinkable across a user's tokens). persistentHash -> Bytes<32>.
+  export pure circuit commitOwner(pk: Bytes<32>, secret: Bytes<32>, tokenId: Uint<64>): Bytes<32> {
+    return persistentHash<[Bytes<32>, Bytes<32>, Bytes<32>, Uint<64>]>([pad(32, "nftzk:owner:v1"), pk, secret, tokenId]);
   }
 
   export pure circuit commitClaim(pk: Bytes<32>, salt: Bytes<32>): Bytes<32> {
@@ -35,35 +35,23 @@ module NftZk {
     return tokenOwner.member(disclose(tokenId)) || pendingClaims.member(disclose(tokenId));
   }
 
-  // Owner commitment of an owned token (a hash; reveals no identity).
+  // Owner commitment of an owned token (a per-token hash; reveals no identity, links no tokens).
   export circuit ownerOf(tokenId: Uint<64>): Bytes<32> {
     assert(tokenOwner.member(disclose(tokenId)), "Token not owned (missing or pending).");
     return tokenOwner.lookup(disclose(tokenId));
   }
 
-  // Claim commitment of an in-transit token.
   export circuit pendingOf(tokenId: Uint<64>): Bytes<32> {
     assert(pendingClaims.member(disclose(tokenId)), "No pending claim for token.");
     return pendingClaims.lookup(disclose(tokenId));
   }
 
-  // Metadata URI of a token (public).
   export circuit uriOf(tokenId: Uint<64>): Bytes<64> {
     assert(tokenExists(tokenId), "Token does not exist.");
     return tokenUri.lookup(disclose(tokenId));
   }
 
-  // The caller's own balance (you can only derive your own owner commitment).
-  export circuit balanceOf(): Uint<64> {
-    const me = ownPublicKey();
-    const meCommit = disclose(commitOwner(me.bytes, getLocalSecret()));
-    if (ownedTokensCount.member(meCommit)) {
-      return ownedTokensCount.lookup(meCommit);
-    }
-    return 0;
-  }
-
-  // Create a brand-new token directly into a pending claim, with metadata (treasury mint primitive).
+  // Create a brand-new token into a pending claim, with metadata (treasury mint primitive).
   // Unauthorized at module level — wrap with your auth (see nft-zk.compact mintAdmin).
   export circuit mint(claim_commitment: Bytes<32>, tokenId: Uint<64>, uri: Bytes<64>): [] {
     assert(!tokenExists(tokenId), "Token already exists.");
@@ -74,39 +62,30 @@ module NftZk {
   // Owner releases an owned token into a recipient-supplied claim commitment. Metadata persists.
   export circuit release(tokenId: Uint<64>, claim_commitment: Bytes<32>): [] {
     const me = ownPublicKey();
-    const meCommit = disclose(commitOwner(me.bytes, getLocalSecret()));
+    const meCommit = disclose(commitOwner(me.bytes, getLocalSecret(), tokenId));
     assert(tokenOwner.member(disclose(tokenId)), "Token not owned.");
     assert(tokenOwner.lookup(disclose(tokenId)) == meCommit, "Not the owner.");
-    assert(ownedTokensCount.lookup(meCommit) >= 1, "Balance underflow.");
-    ownedTokensCount.lookup(meCommit).decrement(1);
     tokenOwner.remove(disclose(tokenId));
     pendingClaims.insert(disclose(tokenId), disclose(claim_commitment));
   }
 
   // Recipient claims a pending token: prove they are the pubkey AND know the salt
-  // behind the claim commitment, then take ownership under their own local_secret.
+  // behind the claim commitment, then take ownership under their own per-token commitment.
   export circuit claim(tokenId: Uint<64>): [] {
     const me = ownPublicKey();
     assert(pendingClaims.member(disclose(tokenId)), "No pending claim.");
     const expected = disclose(commitClaim(me.bytes, getClaimSalt()));
     assert(pendingClaims.lookup(disclose(tokenId)) == expected, "Claim authorization failed.");
     pendingClaims.remove(disclose(tokenId));
-    const newOwner = disclose(commitOwner(me.bytes, getLocalSecret()));
-    tokenOwner.insert(disclose(tokenId), newOwner);
-    if (!ownedTokensCount.member(newOwner)) {
-      ownedTokensCount.insert(newOwner, default<Counter>);
-    }
-    ownedTokensCount.lookup(newOwner).increment(1);
+    tokenOwner.insert(disclose(tokenId), disclose(commitOwner(me.bytes, getLocalSecret(), tokenId)));
   }
 
   // Owner burns their own token (and its metadata).
   export circuit burn(tokenId: Uint<64>): [] {
     const me = ownPublicKey();
-    const meCommit = disclose(commitOwner(me.bytes, getLocalSecret()));
+    const meCommit = disclose(commitOwner(me.bytes, getLocalSecret(), tokenId));
     assert(tokenOwner.member(disclose(tokenId)), "Token not owned.");
     assert(tokenOwner.lookup(disclose(tokenId)) == meCommit, "Not the owner.");
-    assert(ownedTokensCount.lookup(meCommit) >= 1, "Balance underflow.");
-    ownedTokensCount.lookup(meCommit).decrement(1);
     tokenOwner.remove(disclose(tokenId));
     tokenUri.remove(disclose(tokenId));
   }
