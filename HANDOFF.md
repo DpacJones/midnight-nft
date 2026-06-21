@@ -1,6 +1,6 @@
 # midnight-nft — Handoff / Status (2026-06-20)
 
-A self-contained summary of what we built, what we proved, and what we learned. Code lives in a local git repo (`~/projects/midnight-nft`, not yet pushed to a remote — see "Getting the code").
+A self-contained summary of what we built, what we proved, and what we learned. The code lives in a private GitHub repo (see Getting the code).
 
 ## TL;DR
 
@@ -32,4 +32,4 @@ In `harness/midnight/README.md`, but the gist: build the contract (`yarn compact
 
 ## Getting the code
 
-It's a local git repo (`~/projects/midnight-nft`, ~10 commits, clean history off the pristine vendored base). It is **not pushed to a remote yet** — to collaborate, push it to GitHub (private is fine). Key docs in-repo: `OVERVIEW.md` (what & why, plain language), `KNOWN_LIMITATIONS.md` (honest caveats), `harness/midnight/README.md` (run steps).
+It is a **private** GitHub repo:  (clean history off the pristine vendored base). Ask the owner for read access to clone. Key docs in-repo:  (what and why, plain language),  (honest caveats),  (run steps).
