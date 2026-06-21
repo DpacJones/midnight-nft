@@ -1,4 +1,4 @@
-// Claim-model NftZk tests (v1.1, per-token commitments). SPDX-License-Identifier: Apache-2.0
+// Claim-model NftZk tests (v1.1: per-token commitments, key-based admin). SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect } from "vitest";
 import { NftZkSimulator, makeUser, toHex, strBytes64 } from "./nft-zk-simulator.js";
 import { setNetworkId } from "@midnight-ntwrk/midnight-js-network-id";
@@ -23,7 +23,6 @@ describe("NftZk claim-model", () => {
     const sim = new NftZkSimulator(admin);
     sim.mintAdmin(sim.claimCommitment(bob), 1n);
     sim.claim(bob, 1n);
-    // offline ownership query: recompute the per-token commitment and match on-chain state
     expect(toHex(sim.ownerOf(1n))).toBe(toHex(sim.ownerCommitment(bob, 1n)));
     expect(() => sim.pendingOf(1n)).toThrow();
   });
@@ -47,7 +46,7 @@ describe("NftZk claim-model", () => {
     sim.claim(alice, 1n);
     expect(toHex(sim.ownerOf(1n))).toBe(toHex(sim.ownerCommitment(alice, 1n)));
     sim.release(alice, 1n, sim.claimCommitment(bob));
-    expect(() => sim.ownerOf(1n)).toThrow(); // pending again
+    expect(() => sim.ownerOf(1n)).toThrow();
     sim.claim(bob, 1n);
     expect(toHex(sim.ownerOf(1n))).toBe(toHex(sim.ownerCommitment(bob, 1n)));
   });
@@ -75,11 +74,6 @@ describe("NftZk claim-model", () => {
     expect(sim.tokenExists(1n)).toBe(false);
   });
 
-  it("non-admin cannot mint", () => {
-    const sim = new NftZkSimulator(admin);
-    expect(() => sim.mintAdminAs(carol, sim.claimCommitment(bob), 1n)).toThrow();
-  });
-
   it("duplicate tokenId mint is rejected", () => {
     const sim = new NftZkSimulator(admin);
     sim.mintAdmin(sim.claimCommitment(bob), 1n);
@@ -96,11 +90,29 @@ describe("NftZk unlinkability (H2 fix)", () => {
     sim.claim(alice, 2n);
     const o1 = toHex(sim.ownerOf(1n));
     const o2 = toHex(sim.ownerOf(2n));
-    // Both are Alice's, but the on-chain commitments must NOT be equal (tokenId folded in).
     expect(o1).not.toBe(o2);
-    // And each matches Alice's per-token offline recomputation.
     expect(o1).toBe(toHex(sim.ownerCommitment(alice, 1n)));
     expect(o2).toBe(toHex(sim.ownerCommitment(alice, 2n)));
+  });
+});
+
+describe("NftZk admin (key-based, M1 fix)", () => {
+  it("non-admin cannot mint", () => {
+    const sim = new NftZkSimulator(admin);
+    expect(() => sim.mintAdminAs(carol, sim.claimCommitment(bob), 1n)).toThrow();
+  });
+
+  it("admin can rotate to a new admin; rights move with the key", () => {
+    const sim = new NftZkSimulator(admin);
+    sim.rotateAdminAs(admin, bob); // hand admin to Bob's key
+    expect(() => sim.mintAdminAs(admin, sim.claimCommitment(carol), 1n)).toThrow(); // old admin lost rights
+    sim.mintAdminAs(bob, sim.claimCommitment(carol), 1n); // new admin can mint
+    expect(sim.tokenExists(1n)).toBe(true);
+  });
+
+  it("non-admin cannot rotate the admin", () => {
+    const sim = new NftZkSimulator(admin);
+    expect(() => sim.rotateAdminAs(carol, carol)).toThrow();
   });
 });
 

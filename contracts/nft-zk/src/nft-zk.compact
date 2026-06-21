@@ -21,33 +21,26 @@ export {
   burn
 };
 
-// Privacy-preserving admin keypair: deployer's secret stays in private state; only the
-// derived public key is stored on-chain, so the admin's wallet identity is never recorded.
-struct AdminSecretKey { bytes: Bytes<32>; }
-struct AdminPublicKey { bytes: Bytes<32>; }
+// Admin is a REAL, transaction-authenticated public key (M1 fix). Auth = the caller's
+// ledger-verified `ownPublicKey()` must equal the stored admin key — unforgeable, and a
+// leaked "secret" can't impersonate it (there is no shared secret). Tradeoff vs the prior
+// hashed-secret design: the admin's public key is now visible on-chain. Acceptable for an
+// operational/treasury role; a fully-private admin would need Schnorr-in-circuit (future).
+export ledger contractAdmin: Bytes<32>;
 
-export ledger contractAdmin: AdminPublicKey;
-
-witness getAdminSecret(): AdminSecretKey;
-
+// The deployer becomes the initial admin (their tx-authenticated pubkey).
 constructor() {
-  contractAdmin = disclose(deriveAdminPublicKey(getAdminSecret()));
+  contractAdmin = disclose(ownPublicKey().bytes);
 }
 
-export circuit deriveAdminPublicKey(sk: AdminSecretKey): AdminPublicKey {
-  return AdminPublicKey {
-    bytes: persistentHash<Vector<2, Bytes<32>>>([pad(32, "nftzk:admin:pk:v1"), sk.bytes])
-  };
-}
-
-// Treasury mint: admin creates a token (with metadata URI) directly into a recipient's
-// claim commitment. The recipient (who generated claim_commitment off-chain) then claims it.
+// Treasury mint: only the admin (by key) may create a token into a recipient's claim commitment.
 export circuit mintAdmin(claim_commitment: Bytes<32>, tokenId: Uint<64>, uri: Bytes<64>): [] {
-  assert(contractAdmin == deriveAdminPublicKey(getAdminSecret()), "Not authorized to mint.");
+  assert(ownPublicKey().bytes == contractAdmin, "Not authorized to mint.");
   mint(claim_commitment, tokenId, uri);
 }
 
-export circuit rotateAdmin(newAdmin: AdminPublicKey): [] {
-  assert(contractAdmin == deriveAdminPublicKey(getAdminSecret()), "Not authorized to rotate admin.");
+// Rotate the admin: the current admin (by key) hands off to a new admin public key.
+export circuit rotateAdmin(newAdmin: Bytes<32>): [] {
+  assert(ownPublicKey().bytes == contractAdmin, "Not authorized to rotate admin.");
   contractAdmin = disclose(newAdmin);
 }

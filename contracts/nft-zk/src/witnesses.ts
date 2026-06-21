@@ -11,22 +11,21 @@ import { WitnessContext } from "@midnight-ntwrk/compact-runtime";
 export type Contract<T, W extends Witnesses<T> = Witnesses<T>> = ContractType<T, W>;
 
 // Private state for the NFT-ZK contract (claim model).
-//   local_secret   : per-user secret for self-custody (owner commitments).
-//   claim_salt     : per-user secret folded into a claim commitment when receiving.
-//   adminSecretKey : deployer-only key; contract stores only its derived public key.
-//   No shared_secret — that was the de-anonymisation hole this rework removes.
+//   local_secret : per-user secret for self-custody (owner commitments).
+//   claim_salt   : per-user secret folded into a claim commitment when receiving
+//                  (use a FRESH salt per incoming transfer).
+// No admin secret: the admin is a real tx-authenticated public key (M1 fix), so admin
+// authorization needs no private witness.
 export type NftZkPrivateState = {
   readonly local_secret: Uint8Array;
   readonly claim_salt: Uint8Array;
-  readonly adminSecretKey: Uint8Array;
 };
 
 export function createNftZkPrivateState(
   local_secret: Uint8Array,
-  claim_salt: Uint8Array,
-  adminSecretKey: Uint8Array
+  claim_salt: Uint8Array
 ): NftZkPrivateState {
-  return { local_secret, claim_salt, adminSecretKey };
+  return { local_secret, claim_salt };
 }
 
 export const witnesses = {
@@ -45,13 +44,5 @@ export const witnesses = {
       return [privateState, privateState.claim_salt];
     }
     throw new Error("No claim salt found.");
-  },
-  getAdminSecret: ({
-    privateState
-  }: WitnessContext<Ledger, NftZkPrivateState>): [NftZkPrivateState, { bytes: Uint8Array }] => {
-    if (privateState.adminSecretKey) {
-      return [privateState, { bytes: privateState.adminSecretKey }];
-    }
-    throw new Error("No admin secret key found.");
   }
 };

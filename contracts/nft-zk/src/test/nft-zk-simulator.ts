@@ -1,4 +1,4 @@
-// Multi-party simulator for the claim-model NftZk (v1.1, per-token commitments).
+// Multi-party simulator for the claim-model NftZk (v1.1, per-token commitments, key-based admin).
 // SPDX-License-Identifier: Apache-2.0
 import {
   type CircuitContext,
@@ -21,8 +21,6 @@ import {
 import { fromHex } from "@midnight-ntwrk/midnight-js-utils";
 import { TextEncoder } from "util";
 
-const ADMIN_SECRET = strBytes("the_real_admin_secret");
-const DUMMY_SECRET = strBytes("not_the_admin");
 const DEFAULT_URI = strBytes64("ipfs://default-metadata");
 
 export type User = {
@@ -93,8 +91,8 @@ export class NftZkSimulator {
     this.address = sampleContractAddress();
     const init = this.contract.initialState(
       createConstructorContext(
-        createNftZkPrivateState(admin.localSecret, admin.claimSalt, ADMIN_SECRET),
-        admin.pubkey
+        createNftZkPrivateState(admin.localSecret, admin.claimSalt),
+        admin.pubkey // deployer becomes admin via ownPublicKey() in the constructor
       )
     );
     this.circuitContext = createCircuitContext(
@@ -105,17 +103,13 @@ export class NftZkSimulator {
     );
   }
 
-  private as(user: User, isAdmin = false): void {
-    const ps = createNftZkPrivateState(
-      user.localSecret,
-      user.claimSalt,
-      isAdmin ? ADMIN_SECRET : DUMMY_SECRET
-    );
+  // Rebuild the context to act AS `user`, preserving current on-chain state.
+  private as(user: User): void {
     this.circuitContext = createCircuitContext(
       this.address,
       user.pubkey,
       this.circuitContext.currentQueryContext.state,
-      ps
+      createNftZkPrivateState(user.localSecret, user.claimSalt)
     );
   }
 
@@ -123,30 +117,33 @@ export class NftZkSimulator {
     return ledger(this.circuitContext.currentQueryContext.state);
   }
 
-  // --- off-chain commitment helpers (what an owner/recipient computes locally) ---
+  // --- off-chain commitment helpers ---
   claimCommitment(user: User): Uint8Array {
     return pureCircuits.commitClaim(pkBytes(user), user.claimSalt);
   }
   claimCommitmentWithSalt(user: User, salt: Uint8Array): Uint8Array {
     return pureCircuits.commitClaim(pkBytes(user), salt);
   }
-  // Per-token owner commitment — this is exactly the "offline ownership query": an owner
-  // recomputes this locally and matches it against ownerOf(tokenId) on the indexer.
   ownerCommitment(user: User, tokenId: bigint): Uint8Array {
     return pureCircuits.commitOwner(pkBytes(user), user.localSecret, tokenId);
   }
 
   // --- writes (impure) ---
   mintAdmin(claimCommitment: Uint8Array, tokenId: bigint, uri: Uint8Array = DEFAULT_URI): void {
-    this.as(this.admin, true);
+    this.mintAdminAs(this.admin, claimCommitment, tokenId, uri);
+  }
+  // Attempt a mint AS `actor` (passes only if actor's key == on-chain admin).
+  mintAdminAs(actor: User, claimCommitment: Uint8Array, tokenId: bigint, uri: Uint8Array = DEFAULT_URI): void {
+    this.as(actor);
     this.circuitContext = this.contract.impureCircuits.mintAdmin(
       this.circuitContext, claimCommitment, tokenId, uri
     ).context;
   }
-  mintAdminAs(actor: User, claimCommitment: Uint8Array, tokenId: bigint, uri: Uint8Array = DEFAULT_URI): void {
-    this.as(actor, false);
-    this.circuitContext = this.contract.impureCircuits.mintAdmin(
-      this.circuitContext, claimCommitment, tokenId, uri
+  // Rotate admin AS `actor` (passes only if actor is the current admin).
+  rotateAdminAs(actor: User, newAdmin: User): void {
+    this.as(actor);
+    this.circuitContext = this.contract.impureCircuits.rotateAdmin(
+      this.circuitContext, pkBytes(newAdmin)
     ).context;
   }
   release(owner: User, tokenId: bigint, claimCommitment: Uint8Array): void {
