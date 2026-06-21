@@ -7,13 +7,14 @@ import CompactStandardLibrary;
 import "./modules/NftZk";
 
 // Self-authorized circuits (caller proves ownership/claim via their own secrets).
-// Raw `mint` is intentionally NOT re-exported — only admin can mint, via mintAdmin.
+// DO NOT add `mint` here — it is unauthenticated; only admin may mint, via mintAdmin.
 export {
   commitOwner,
   commitClaim,
   tokenExists,
   ownerOf,
   pendingOf,
+  uriOf,
   balanceOf,
   release,
   claim,
@@ -39,11 +40,11 @@ export circuit deriveAdminPublicKey(sk: AdminSecretKey): AdminPublicKey {
   };
 }
 
-// Treasury mint: admin creates a token directly into a recipient's claim commitment.
-// The recipient (who generated claim_commitment off-chain) then claims it.
-export circuit mintAdmin(claim_commitment: Bytes<32>, tokenId: Uint<64>): [] {
+// Treasury mint: admin creates a token (with metadata URI) directly into a recipient's
+// claim commitment. The recipient (who generated claim_commitment off-chain) then claims it.
+export circuit mintAdmin(claim_commitment: Bytes<32>, tokenId: Uint<64>, uri: Bytes<64>): [] {
   assert(contractAdmin == deriveAdminPublicKey(getAdminSecret()), "Not authorized to mint.");
-  mint(claim_commitment, tokenId);
+  mint(claim_commitment, tokenId, uri);
 }
 
 // Rotate the admin key: current admin proves authority, ledger updates to the new pubkey.

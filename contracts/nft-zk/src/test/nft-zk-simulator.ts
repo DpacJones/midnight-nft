@@ -22,6 +22,7 @@ import { TextEncoder } from "util";
 
 const ADMIN_SECRET = strBytes("the_real_admin_secret");
 const DUMMY_SECRET = strBytes("not_the_admin");
+const DEFAULT_URI = strBytes64("ipfs://default-metadata");
 
 export type User = {
   name: string;
@@ -34,6 +35,13 @@ function strBytes(str: string): Uint8Array {
   const encoded = new TextEncoder().encode(str);
   const bytes = new Uint8Array(32);
   bytes.set(encoded.slice(0, 32));
+  return bytes;
+}
+
+export function strBytes64(str: string): Uint8Array {
+  const encoded = new TextEncoder().encode(str);
+  const bytes = new Uint8Array(64);
+  bytes.set(encoded.slice(0, 64));
   return bytes;
 }
 
@@ -115,7 +123,7 @@ export class NftZkSimulator {
     return ledger(this.circuitContext.currentQueryContext.state);
   }
 
-  // --- off-chain commitment helpers (what a recipient/owner computes locally) ---
+  // --- off-chain commitment helpers ---
   claimCommitment(user: User): Uint8Array {
     return pureCircuits.commitClaim(pkBytes(user), user.claimSalt);
   }
@@ -127,20 +135,22 @@ export class NftZkSimulator {
   }
 
   // --- writes (impure) ---
-  mintAdmin(claimCommitment: Uint8Array, tokenId: bigint): void {
+  mintAdmin(claimCommitment: Uint8Array, tokenId: bigint, uri: Uint8Array = DEFAULT_URI): void {
     this.as(this.admin, true);
     this.circuitContext = this.contract.impureCircuits.mintAdmin(
       this.circuitContext,
       claimCommitment,
-      tokenId
+      tokenId,
+      uri
     ).context;
   }
-  mintAdminAs(actor: User, claimCommitment: Uint8Array, tokenId: bigint): void {
+  mintAdminAs(actor: User, claimCommitment: Uint8Array, tokenId: bigint, uri: Uint8Array = DEFAULT_URI): void {
     this.as(actor, false); // non-admin actor -> should be rejected by the contract
     this.circuitContext = this.contract.impureCircuits.mintAdmin(
       this.circuitContext,
       claimCommitment,
-      tokenId
+      tokenId,
+      uri
     ).context;
   }
   release(owner: User, tokenId: bigint, claimCommitment: Uint8Array): void {
@@ -172,6 +182,9 @@ export class NftZkSimulator {
   }
   pendingOf(tokenId: bigint): Uint8Array {
     return this.contract.circuits.pendingOf(this.circuitContext, tokenId).result;
+  }
+  uriOf(tokenId: bigint): Uint8Array {
+    return this.contract.circuits.uriOf(this.circuitContext, tokenId).result;
   }
   tokenExists(tokenId: bigint): boolean {
     return this.contract.circuits.tokenExists(this.circuitContext, tokenId).result;

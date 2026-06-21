@@ -1,7 +1,7 @@
 // This file is part of midnightntwrk/example-nft-contracts (vendored, Apache-2.0),
 // adapted for the Atlantis `midnight-nft` foundation: shared_secret removed; ownership
 // via domain-separated persistentHash commitments; transfers via a two-step
-// release -> claim flow (zero-leakage Option D). Approvals dropped for v1.
+// release -> claim flow (zero-leakage Option D); per-token metadata URI. Approvals dropped for v1.
 // SPDX-License-Identifier: Apache-2.0
 
 module NftZk {
@@ -14,6 +14,9 @@ module NftZk {
   export ledger pendingClaims: Map<Uint<64>, Bytes<32>>;
   // Balance keyed by owner commitment (only the owner can derive their own commitment).
   export ledger ownedTokensCount: Map<Bytes<32>, Counter>;
+  // Per-token metadata URI (public: e.g. ipfs://... pointing to off-chain JSON). Set at mint,
+  // persists through transfers, removed on burn. Metadata is intentionally NOT private.
+  export ledger tokenUri: Map<Uint<64>, Bytes<64>>;
 
   // Per-user private inputs. No shared secret — that was the de-anonymisation hole.
   export witness getLocalSecret(): Bytes<32>;   // owner's self secret (self-custody)
@@ -44,6 +47,12 @@ module NftZk {
     return pendingClaims.lookup(disclose(tokenId));
   }
 
+  // Metadata URI of a token (public).
+  export circuit uriOf(tokenId: Uint<64>): Bytes<64> {
+    assert(tokenExists(tokenId), "Token does not exist.");
+    return tokenUri.lookup(disclose(tokenId));
+  }
+
   // The caller's own balance (you can only derive your own owner commitment).
   export circuit balanceOf(): Uint<64> {
     const me = ownPublicKey();
@@ -54,14 +63,15 @@ module NftZk {
     return 0;
   }
 
-  // Create a brand-new token directly into a pending claim (treasury mint primitive).
+  // Create a brand-new token directly into a pending claim, with metadata (treasury mint primitive).
   // Unauthorized at module level — wrap with your auth (see nft-zk.compact mintAdmin).
-  export circuit mint(claim_commitment: Bytes<32>, tokenId: Uint<64>): [] {
+  export circuit mint(claim_commitment: Bytes<32>, tokenId: Uint<64>, uri: Bytes<64>): [] {
     assert(!tokenExists(tokenId), "Token already exists.");
     pendingClaims.insert(disclose(tokenId), disclose(claim_commitment));
+    tokenUri.insert(disclose(tokenId), disclose(uri));
   }
 
-  // Owner releases an owned token into a recipient-supplied claim commitment.
+  // Owner releases an owned token into a recipient-supplied claim commitment. Metadata persists.
   export circuit release(tokenId: Uint<64>, claim_commitment: Bytes<32>): [] {
     const me = ownPublicKey();
     const meCommit = disclose(commitOwner(me.bytes, getLocalSecret()));
@@ -89,7 +99,7 @@ module NftZk {
     ownedTokensCount.lookup(newOwner).increment(1);
   }
 
-  // Owner burns their own token.
+  // Owner burns their own token (and its metadata).
   export circuit burn(tokenId: Uint<64>): [] {
     const me = ownPublicKey();
     const meCommit = disclose(commitOwner(me.bytes, getLocalSecret()));
@@ -98,5 +108,6 @@ module NftZk {
     assert(ownedTokensCount.lookup(meCommit) >= 1, "Balance underflow.");
     ownedTokensCount.lookup(meCommit).decrement(1);
     tokenOwner.remove(disclose(tokenId));
+    tokenUri.remove(disclose(tokenId));
   }
 }
