@@ -4,3 +4,4 @@ reports
 .vendored-from-sha
 harness/midnight/contract/managed
 midnight-level-db/
+CLAUDE.md
