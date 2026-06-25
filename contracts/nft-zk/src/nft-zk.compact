@@ -21,26 +21,51 @@ export {
   burn
 };
 
-// Admin is a REAL, transaction-authenticated public key (M1 fix). Auth = the caller's
-// ledger-verified `ownPublicKey()` must equal the stored admin key — unforgeable, and a
-// leaked "secret" can't impersonate it (there is no shared secret). Tradeoff vs the prior
-// hashed-secret design: the admin's public key is now visible on-chain. Acceptable for an
-// operational/treasury role; a fully-private admin would need Schnorr-in-circuit (future).
-export ledger contractAdmin: Bytes<32>;
+// Admin uses a secret-derived keypair pattern (M1 fix). The deployer's DApp generates an
+// admin private key, keeps it in private state, and the contract stores ONLY the derived
+// public key on the ledger. Admin authorization = proof of knowledge of the admin secret:
+// each admin circuit re-derives the public key from the prover-held secret and checks it
+// equals `contractAdmin`. This is sound because `localSecretKey()` is a confidential witness
+// that never leaves the prover's machine and is never disclosed — an attacker who reads
+// `contractAdmin` off the ledger cannot reverse the persistentHash to recover the secret, so
+// they cannot satisfy the gate. (NOTE: this replaces an earlier `ownPublicKey()`-based check
+// that was NOT unforgeable — `ownPublicKey()` is a prover-supplied witness, not the tx
+// signer, so anyone could echo the public `contractAdmin` value back and pass the gate.)
+//
+// Tradeoff (per KNOWN_LIMITATIONS): admin authority is a single shared secret rather than a
+// signer set — whoever holds the secret is the admin, and rotation hands off that secret's
+// authority. A multi-party / signature-bound admin would need Schnorr-in-circuit (future).
+struct AdminSecretKey { bytes: Bytes<32>; }
+struct AdminPublicKey { bytes: Bytes<32>; }
 
-// The deployer becomes the initial admin (their tx-authenticated pubkey).
+export ledger contractAdmin: AdminPublicKey;
+
+// Admin private key, supplied off-chain by the prover; confidential and never disclosed.
+witness localSecretKey(): AdminSecretKey;
+
+// The deployer becomes the initial admin: the contract derives and stores their public key.
 constructor() {
-  contractAdmin = disclose(ownPublicKey().bytes);
+  contractAdmin = disclose(deriveAdminPublicKey(localSecretKey()));
 }
 
-// Treasury mint: only the admin (by key) may create a token into a recipient's claim commitment.
+// Derive the admin public key from the admin secret. Domain-separated to this contract
+// ("nftzk:admin:pk:v1") so the key is not interchangeable with the sibling `nft` contract.
+export circuit deriveAdminPublicKey(sk: AdminSecretKey): AdminPublicKey {
+  return AdminPublicKey {
+    bytes: persistentHash<Vector<2, Bytes<32>>>([pad(32, "nftzk:admin:pk:v1"), sk.bytes])
+  };
+}
+
+// Treasury mint: only the admin (proving knowledge of the admin secret) may create a token
+// into a recipient's claim commitment.
 export circuit mintAdmin(claim_commitment: Bytes<32>, tokenId: Uint<64>, uri: Bytes<64>): [] {
-  assert(ownPublicKey().bytes == contractAdmin, "Not authorized to mint.");
+  assert(contractAdmin == deriveAdminPublicKey(localSecretKey()), "Not authorized to mint.");
   mint(claim_commitment, tokenId, uri);
 }
 
-// Rotate the admin: the current admin (by key) hands off to a new admin public key.
-export circuit rotateAdmin(newAdmin: Bytes<32>): [] {
-  assert(ownPublicKey().bytes == contractAdmin, "Not authorized to rotate admin.");
+// Rotate the admin: the current admin proves authority, then hands off to a new admin public
+// key (the new admin generates their secret locally and shares only the derived public key).
+export circuit rotateAdmin(newAdmin: AdminPublicKey): [] {
+  assert(contractAdmin == deriveAdminPublicKey(localSecretKey()), "Not authorized to rotate admin.");
   contractAdmin = disclose(newAdmin);
 }

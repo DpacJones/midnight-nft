@@ -28,6 +28,7 @@ export type User = {
   pubkey: string; // hex CoinPublicKey
   localSecret: Uint8Array;
   claimSalt: Uint8Array;
+  adminSecret: Uint8Array; // admin private key; derives to an AdminPublicKey on-chain
 };
 
 function strBytes(str: string): Uint8Array {
@@ -62,7 +63,8 @@ export function makeUser(name: string): User {
     name,
     pubkey: pubkeyHex(name),
     localSecret: strBytes(name + ":local"),
-    claimSalt: strBytes(name + ":salt")
+    claimSalt: strBytes(name + ":salt"),
+    adminSecret: strBytes(name + ":admin")
   };
 }
 
@@ -91,8 +93,8 @@ export class NftZkSimulator {
     this.address = sampleContractAddress();
     const init = this.contract.initialState(
       createConstructorContext(
-        createNftZkPrivateState(admin.localSecret, admin.claimSalt),
-        admin.pubkey // deployer becomes admin via ownPublicKey() in the constructor
+        createNftZkPrivateState(admin.localSecret, admin.claimSalt, admin.adminSecret),
+        admin.pubkey // deployer's coin pubkey; admin authority derives from admin.adminSecret
       )
     );
     this.circuitContext = createCircuitContext(
@@ -109,7 +111,7 @@ export class NftZkSimulator {
       this.address,
       user.pubkey,
       this.circuitContext.currentQueryContext.state,
-      createNftZkPrivateState(user.localSecret, user.claimSalt)
+      createNftZkPrivateState(user.localSecret, user.claimSalt, user.adminSecret)
     );
   }
 
@@ -139,11 +141,14 @@ export class NftZkSimulator {
       this.circuitContext, claimCommitment, tokenId, uri
     ).context;
   }
-  // Rotate admin AS `actor` (passes only if actor is the current admin).
+  // Rotate admin AS `actor` (passes only if actor is the current admin). The new admin is
+  // identified by the PUBLIC key derived from their admin secret — the only thing that needs
+  // to be handed over on-chain; the secret itself never leaves the new admin's device.
   rotateAdminAs(actor: User, newAdmin: User): void {
     this.as(actor);
+    const newAdminPk = pureCircuits.deriveAdminPublicKey({ bytes: newAdmin.adminSecret });
     this.circuitContext = this.contract.impureCircuits.rotateAdmin(
-      this.circuitContext, pkBytes(newAdmin)
+      this.circuitContext, newAdminPk
     ).context;
   }
   release(owner: User, tokenId: bigint, claimCommitment: Uint8Array): void {
