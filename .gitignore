@@ -5,3 +5,28 @@ reports
 harness/midnight/contract/managed
 midnight-level-db/
 CLAUDE.md
+
+# --- secrets / keys (added 2026-06-25, before repo made public) ---
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.p12
+*.pfx
+*.keystore
+*.seed
+*.secret
+*.mnemonic
+secrets/
+id_rsa
+id_ed25519
+*_seed.txt
+wallet.json
+
+# --- OS / editor cruft ---
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/
