@@ -107,7 +107,15 @@ export class CredentialZkSimulator {
   private issuedIndex = new Map<string, bigint>();
   private issuedNext = 0n;
 
-  constructor(issuerUser: User, domain: Uint8Array, schemaId: Uint8Array) {
+  // `deploymentSalt` separates two deployments that share an issuer+schema (see the contract
+  // constructor: kernel.self() is unusable in-constructor, so the caller must supply a unique
+  // salt). Defaults to a fixed salt; the two-instance regression test passes distinct salts.
+  constructor(
+    issuerUser: User,
+    domain: Uint8Array,
+    schemaId: Uint8Array,
+    deploymentSalt: Uint8Array = strBytes("mipa:deploy:default"),
+  ) {
     this.issuerUser = issuerUser;
     this.contract = new Contract<CredentialZkPrivateState>(witnesses);
     this.address = sampleContractAddress();
@@ -120,6 +128,7 @@ export class CredentialZkSimulator {
       ),
       domain,
       schemaId,
+      deploymentSalt,
     );
     this.circuitContext = createCircuitContext(
       this.address,
@@ -264,12 +273,13 @@ export class CredentialZkSimulator {
   }
 
   // --- holder proof (single bound presentation) ---
-  // Returns the disclosed session nullifier. Membership (issued) and non-membership (not
+  // Returns the disclosed presentation nullifier. Membership (issued) and non-membership (not
   // revoked) are checked atomically over ONE credential opening, so a revoked holder cannot
-  // mix a real "issued" opening with a fabricated "not-revoked" handle (H1).
+  // mix a real "issued" opening with a fabricated "not-revoked" handle (H1). `verifierChallenge`
+  // is the verifier-chosen, audience-bound challenge that seeds the nullifier.
   provePresentationAs(
     holder: User,
-    sessionNonce: Uint8Array,
+    verifierChallenge: Uint8Array,
     overrides: Partial<CredentialZkPrivateState> = {},
   ): Uint8Array {
     const cm = this.commitmentFor(holder);
@@ -287,7 +297,7 @@ export class CredentialZkSimulator {
     });
     const res = this.contract.impureCircuits.provePresentation(
       this.circuitContext,
-      sessionNonce,
+      verifierChallenge,
     );
     this.circuitContext = res.context;
     return res.result;
@@ -297,7 +307,7 @@ export class CredentialZkSimulator {
   // it works even for a revoked handle). Confirms the CIRCUIT itself rejects a forged bracket.
   provePresentationForged(
     holder: User,
-    sessionNonce: Uint8Array,
+    verifierChallenge: Uint8Array,
     lowValue: bigint,
     lowNext: bigint,
     lowIndex: bigint,
@@ -314,7 +324,7 @@ export class CredentialZkSimulator {
     });
     const res = this.contract.impureCircuits.provePresentation(
       this.circuitContext,
-      sessionNonce,
+      verifierChallenge,
     );
     this.circuitContext = res.context;
     return res.result;

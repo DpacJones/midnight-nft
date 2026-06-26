@@ -14,7 +14,10 @@ setNetworkId("undeployed");
 
 const DOMAIN = strBytes("mipa:domain:test");
 const SCHEMA = strBytes("mipa:schema:v1");
-const NONCE = strBytes("session-default");
+// Verifier-chosen, audience-bound challenge that seeds the presentation nullifier (JOB 3 rename
+// from "sessionNonce"). Reusing the same challenge for the same credential yields the same
+// nullifier (in-session reuse detection); a fresh challenge yields an unlinkable nullifier.
+const CHALLENGE = strBytes("verifier-challenge-default");
 
 // distinct 248-bit handles chosen to exercise several IMT orderings
 const issuer = makeUser("Issuer", 0n); // issuer's own handle unused
@@ -31,13 +34,13 @@ describe("MIP-A: issuance and membership", () => {
   it("issuer issues a holder-built commitment; holder presents successfully", () => {
     const sim = newSim();
     sim.issue(sim.commitmentFor(alice));
-    expect(() => sim.provePresentationAs(alice, NONCE)).not.toThrow();
+    expect(() => sim.provePresentationAs(alice, CHALLENGE)).not.toThrow();
   });
 
   it("a holder who was never issued cannot present", () => {
     const sim = newSim();
     sim.issue(sim.commitmentFor(alice));
-    expect(() => sim.provePresentationAs(bob, NONCE)).toThrow();
+    expect(() => sim.provePresentationAs(bob, CHALLENGE)).toThrow();
   });
 
   it("two credentials for the SAME holder are distinct on-chain leaves", () => {
@@ -58,8 +61,8 @@ describe("MIP-A: issuance and membership", () => {
     expect(toHex(cmA)).not.toBe(toHex(cmB));
     sim.issue(cmA);
     sim.issue(cmB);
-    expect(() => sim.provePresentationAs(aliceCredA, NONCE)).not.toThrow();
-    expect(() => sim.provePresentationAs(aliceCredB, NONCE)).not.toThrow();
+    expect(() => sim.provePresentationAs(aliceCredA, CHALLENGE)).not.toThrow();
+    expect(() => sim.provePresentationAs(aliceCredB, CHALLENGE)).not.toThrow();
   });
 });
 
@@ -89,15 +92,15 @@ describe("MIP-A: private non-revocation (Indexed Merkle Tree)", () => {
   it("a never-revoked holder presents (empty revoked set)", () => {
     const sim = newSim();
     sim.issue(sim.commitmentFor(alice));
-    expect(() => sim.provePresentationAs(alice, NONCE)).not.toThrow();
+    expect(() => sim.provePresentationAs(alice, CHALLENGE)).not.toThrow();
   });
 
   it("after revoking the handle, presentation fails", () => {
     const sim = newSim();
     sim.issue(sim.commitmentFor(alice));
-    expect(() => sim.provePresentationAs(alice, NONCE)).not.toThrow();
+    expect(() => sim.provePresentationAs(alice, CHALLENGE)).not.toThrow();
     sim.revoke(alice.handle);
-    expect(() => sim.provePresentationAs(alice, NONCE)).toThrow();
+    expect(() => sim.provePresentationAs(alice, CHALLENGE)).toThrow();
   });
 
   it("revoking one holder does not affect another holder's presentation", () => {
@@ -105,8 +108,8 @@ describe("MIP-A: private non-revocation (Indexed Merkle Tree)", () => {
     sim.issue(sim.commitmentFor(alice));
     sim.issue(sim.commitmentFor(bob));
     sim.revoke(alice.handle);
-    expect(() => sim.provePresentationAs(alice, NONCE)).toThrow();
-    expect(() => sim.provePresentationAs(bob, NONCE)).not.toThrow();
+    expect(() => sim.provePresentationAs(alice, CHALLENGE)).toThrow();
+    expect(() => sim.provePresentationAs(bob, CHALLENGE)).not.toThrow();
   });
 
   it("handles many revocations in mixed order and keeps the IMT consistent", () => {
@@ -116,11 +119,11 @@ describe("MIP-A: private non-revocation (Indexed Merkle Tree)", () => {
     sim.revoke(carol.handle);
     sim.revoke(bob.handle);
     sim.revoke(dave.handle);
-    expect(() => sim.provePresentationAs(carol, NONCE)).toThrow();
-    expect(() => sim.provePresentationAs(bob, NONCE)).toThrow();
-    expect(() => sim.provePresentationAs(dave, NONCE)).toThrow();
+    expect(() => sim.provePresentationAs(carol, CHALLENGE)).toThrow();
+    expect(() => sim.provePresentationAs(bob, CHALLENGE)).toThrow();
+    expect(() => sim.provePresentationAs(dave, CHALLENGE)).toThrow();
     // alice (5000) was never revoked and sits between carol and dave -> still valid
-    expect(() => sim.provePresentationAs(alice, NONCE)).not.toThrow();
+    expect(() => sim.provePresentationAs(alice, CHALLENGE)).not.toThrow();
     // sentinel + 3 revocations (each adds one leaf) = 4 (count starts at 1 for sentinel)
     expect(sim.revokedCount()).toBe(4n);
   });
@@ -132,10 +135,10 @@ describe("MIP-A: private non-revocation (Indexed Merkle Tree)", () => {
     // IMT now: (0,5000)@0 and (5000,0)@1. Neither brackets 5000, so any attempt the holder
     // makes with a REAL in-tree leaf fails the on-chain bracketing assert.
     expect(() =>
-      sim.provePresentationForged(alice, NONCE, 0n, 5000n, 0n),
+      sim.provePresentationForged(alice, CHALLENGE, 0n, 5000n, 0n),
     ).toThrow(); // handle 5000 < low.next 5000 is false
     expect(() =>
-      sim.provePresentationForged(alice, NONCE, 5000n, 0n, 1n),
+      sim.provePresentationForged(alice, CHALLENGE, 5000n, 0n, 1n),
     ).toThrow(); // low.value 5000 < handle 5000 is false
   });
 
@@ -151,17 +154,17 @@ describe("MIP-A: H1 — single bound presentation (no mix-and-match)", () => {
   it("a revoked holder cannot present even though their commitment is still issued", () => {
     const sim = newSim();
     sim.issue(sim.commitmentFor(alice));
-    expect(() => sim.provePresentationAs(alice, NONCE)).not.toThrow();
+    expect(() => sim.provePresentationAs(alice, CHALLENGE)).not.toThrow();
     sim.revoke(alice.handle);
     // alice's commitment is STILL an issued leaf, but membership and non-revocation are now
     // proven over the SAME opening in ONE circuit, so the old "prove issued with the real
     // handle, prove not-revoked with a fake handle" bypass is structurally impossible. Even a
     // forged bracket over the real revoked handle fails the on-chain non-membership asserts.
     expect(() =>
-      sim.provePresentationForged(alice, NONCE, 0n, alice.handle, 0n),
+      sim.provePresentationForged(alice, CHALLENGE, 0n, alice.handle, 0n),
     ).toThrow();
     expect(() =>
-      sim.provePresentationForged(alice, NONCE, alice.handle, 0n, 1n),
+      sim.provePresentationForged(alice, CHALLENGE, alice.handle, 0n, 1n),
     ).toThrow();
   });
 
@@ -189,7 +192,31 @@ describe("MIP-A: H2 — revoke index bound to the proven predecessor path", () =
     ).toThrow();
     // the correctly-indexed revoke still succeeds, and alice can then no longer present
     sim.revoke(alice.handle);
-    expect(() => sim.provePresentationAs(alice, NONCE)).toThrow();
+    expect(() => sim.provePresentationAs(alice, CHALLENGE)).toThrow();
+  });
+
+  it("a revoke whose predecessor sits at index >= 2 succeeds (locks indexFromPath bit convention)", () => {
+    const sim = newSim();
+    // Build an ASCENDING chain so each new predecessor lands at a progressively higher index.
+    // revoke only needs issuer auth + correct bracketing (no issuance required).
+    sim.revoke(1000n); // predecessor (0,0)@0      -> IMT: (0,1000)@0, (1000,0)@1
+    sim.revoke(2000n); // predecessor (1000,0)@1   -> IMT: (0,1000)@0,(1000,2000)@1,(2000,0)@2
+    sim.revoke(3000n); // predecessor (2000,0)@2   -> IMT: ...,(2000,3000)@2,(3000,0)@3
+    // Predecessor of 2500 is (2000,3000) at INDEX 2 -> indexFromPath must yield 2 (bit 1 set).
+    // If indexFromPath mis-folded the high bits, the in-place splice would overwrite the wrong
+    // leaf and the off-chain mirror would diverge, surfacing as a failure on the NEXT revoke.
+    expect(() => sim.revoke(2500n)).not.toThrow();
+    // Now (2500,3000) lives at INDEX 4; predecessor of 2700 is (2500,3000)@4 -> indexFromPath
+    // must yield 4 (bit 2 set). A correct revoke here only succeeds if both bit-1 and bit-2
+    // were folded correctly across the chain.
+    expect(() => sim.revoke(2700n)).not.toThrow();
+    // And a forged WRONG index for that same high-index predecessor still reverts (the path
+    // fetched for index 2 has leaf != revLeafHash(2500,3000)).
+    expect(() =>
+      sim.revokeForged(issuer, 2800n, 2700n, 3000n, 2n),
+    ).toThrow();
+    // sentinel(1) + 5 successful revokes (1000,2000,3000,2500,2700); the forged one reverted.
+    expect(sim.revokedCount()).toBe(6n);
   });
 });
 
@@ -206,7 +233,7 @@ describe("MIP-A: handle 0 (IMT sentinel) is forbidden", () => {
     sim.issue(sim.commitmentFor(zeroUser));
     // even with the sentinel as the (forged) bracket, assert(handle != 0) rejects it
     expect(() =>
-      sim.provePresentationForged(zeroUser, NONCE, 0n, 0n, 0n),
+      sim.provePresentationForged(zeroUser, CHALLENGE, 0n, 0n, 0n),
     ).toThrow();
   });
 });
@@ -215,14 +242,14 @@ describe("MIP-A: wallet-profile teeth (proof of holder identity)", () => {
   it("a wallet-profile holder presents with the correct identity secret", () => {
     const sim = newSim();
     sim.issue(sim.commitmentFor(alice)); // alice uses the wallet profile by default
-    expect(() => sim.provePresentationAs(alice, NONCE)).not.toThrow();
+    expect(() => sim.provePresentationAs(alice, CHALLENGE)).not.toThrow();
   });
 
   it("a wallet-profile presentation with a WRONG identity secret is rejected", () => {
     const sim = newSim();
     sim.issue(sim.commitmentFor(alice));
     expect(() =>
-      sim.provePresentationAs(alice, NONCE, {
+      sim.provePresentationAs(alice, CHALLENGE, {
         holder_identity_secret: strBytes("not-alices-identity"),
       }),
     ).toThrow();
@@ -238,7 +265,7 @@ describe("MIP-A: wallet-profile teeth (proof of holder identity)", () => {
     sim.issue(sim.commitmentFor(carolBearer));
     // a zeroed identity secret is fine: the bearer profile skips the identity check
     expect(() =>
-      sim.provePresentationAs(carolBearer, NONCE, {
+      sim.provePresentationAs(carolBearer, CHALLENGE, {
         holder_identity_secret: new Uint8Array(32),
       }),
     ).not.toThrow();
@@ -273,7 +300,7 @@ describe("MIP-A: hardened two-step issuer rotation", () => {
     sim.issue(sim.commitmentFor(alice));
     sim.proposeIssuerAs(issuer, bob);
     sim.acceptIssuerAs(bob);
-    expect(() => sim.provePresentationAs(alice, NONCE)).not.toThrow();
+    expect(() => sim.provePresentationAs(alice, CHALLENGE)).not.toThrow();
   });
 });
 
@@ -297,5 +324,31 @@ describe("MIP-A: privacy — secrets never reach the ledger", () => {
     expect(dump).not.toContain(toHex(alice.holderSecret));
     expect(dump).not.toContain(toHex(alice.nonce));
     expect(dump).not.toContain(handleHex(alice.handle));
+  });
+});
+
+describe("MIP-A: deploymentSalt — per-deployment namespace separation", () => {
+  // Regression guard for the kernel.self() footgun. kernel.self() is unusable in a constructor
+  // (it resolves to the dummy/zero contract address because the address does not yet exist when
+  // the constructor circuit runs), so two deployments sharing (issuer, schemaId) would otherwise
+  // derive IDENTICAL namespaces — enabling cross-instance commitment replay. The contract now
+  // folds an explicit caller-supplied deploymentSalt into the sealed namespace instead.
+  it("distinct deploymentSalts -> distinct issuerNamespace for identical issuer+domain+schema", () => {
+    const saltA = strBytes("deployment-A");
+    const saltB = strBytes("deployment-B");
+    const simA = new CredentialZkSimulator(issuer, DOMAIN, SCHEMA, saltA);
+    const simB = new CredentialZkSimulator(issuer, DOMAIN, SCHEMA, saltB);
+    expect(toHex(simA.getLedger().issuerNamespace)).not.toBe(
+      toHex(simB.getLedger().issuerNamespace),
+    );
+  });
+
+  it("the SAME deploymentSalt is deterministic (same issuer+domain+schema -> same namespace)", () => {
+    const salt = strBytes("deployment-shared");
+    const simA = new CredentialZkSimulator(issuer, DOMAIN, SCHEMA, salt);
+    const simB = new CredentialZkSimulator(issuer, DOMAIN, SCHEMA, salt);
+    expect(toHex(simA.getLedger().issuerNamespace)).toBe(
+      toHex(simB.getLedger().issuerNamespace),
+    );
   });
 });
