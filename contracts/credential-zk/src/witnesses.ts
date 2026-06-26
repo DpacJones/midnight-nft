@@ -40,6 +40,8 @@ export type CredentialZkPrivateState = {
   readonly holder_secret: Uint8Array;
   readonly revocation_handle: bigint;
   readonly credential_nonce: Uint8Array;
+  // holder identity secret behind holder_pk (WALLET profile only; deriveUserPk(secret)==pk)
+  readonly holder_identity_secret: Uint8Array;
   // predecessor / low-leaf coordinates for the active IMT path lookup (set per call)
   readonly low_value: bigint;
   readonly low_next: bigint;
@@ -59,6 +61,7 @@ export function createCredentialZkPrivateState(
     holder_secret: fields.holder_secret ?? z32,
     revocation_handle: fields.revocation_handle ?? 0n,
     credential_nonce: fields.credential_nonce ?? z32,
+    holder_identity_secret: fields.holder_identity_secret ?? z32,
     low_value: fields.low_value ?? 0n,
     low_next: fields.low_next ?? 0n,
     low_index: fields.low_index ?? 0n,
@@ -89,6 +92,15 @@ export const witnesses = {
     { bytes: Uint8Array },
   ] => {
     return [privateState, { bytes: privateState.issuer_secret }];
+  },
+
+  holderIdentitySecret: ({
+    privateState,
+  }: WitnessContext<Ledger, CredentialZkPrivateState>): [
+    CredentialZkPrivateState,
+    Uint8Array,
+  ] => {
+    return [privateState, privateState.holder_identity_secret];
   },
 
   getCredentialOpening: ({

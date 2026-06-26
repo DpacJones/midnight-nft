@@ -62,23 +62,34 @@ export type User = {
   nonce: Uint8Array;
   handle: bigint; // Uint<248> revocation handle (issuer+holder shared, unlinkable on-chain)
   issuerSecret: Uint8Array;
+  identitySecret: Uint8Array; // WALLET profile: deriveUserPk(identitySecret) === holderPk
 };
 
 // `handle` is assigned explicitly per user so tests can exercise specific IMT orderings.
+// For the WALLET profile, holderPk is DERIVED from the identity secret so the on-chain
+// `provePresentation` identity check (holderPk == deriveUserPk(holderIdentitySecret())) holds.
+// For the BEARER profile, holderPk is an arbitrary key and the identity secret is unused.
 export function makeUser(
   name: string,
   handle: bigint,
   profileTag?: Uint8Array,
 ): User {
+  const tag = profileTag ?? pureCircuits.walletProfileTag();
+  const identitySecret = strBytes(name + ":id");
+  const isWallet = toHex(tag) === toHex(pureCircuits.walletProfileTag());
+  const holderPk = isWallet
+    ? pureCircuits.deriveUserPk(identitySecret)
+    : strBytes(name + ":pk");
   return {
     name,
     pubkey: pubkeyHex(name),
-    profileTag: profileTag ?? pureCircuits.walletProfileTag(),
-    holderPk: strBytes(name + ":pk"),
+    profileTag: tag,
+    holderPk,
     holderSecret: strBytes(name + ":secret"),
     nonce: strBytes(name + ":nonce"),
     handle,
     issuerSecret: strBytes(name + ":issuer"),
+    identitySecret,
   };
 }
 
@@ -139,6 +150,7 @@ export class CredentialZkSimulator {
         holder_secret: user.holderSecret,
         revocation_handle: user.handle,
         credential_nonce: user.nonce,
+        holder_identity_secret: user.identitySecret,
         ...overrides,
       }),
     );
@@ -203,11 +215,34 @@ export class CredentialZkSimulator {
       handle,
       low.value,
       oldNext,
-      low.index,
     ).context;
     // mirror the splice
     this.imt[Number(low.index)] = { value: low.value, next: handle };
     this.imt.push({ value: handle, next: oldNext });
+  }
+
+  // Adversarial revoke: supply caller-chosen low coordinates / index. Used to confirm the
+  // CIRCUIT (not just the simulator mirror) reverts when the index is not bound to the proven
+  // predecessor path (H2). With correct (value,next) but a WRONG index, getRevokeLowPath
+  // fetches the path for the wrong leaf, so `path.leaf == lowHash` fails on-chain.
+  revokeForged(
+    actor: User,
+    handle: bigint,
+    lowValue: bigint,
+    lowNext: bigint,
+    lowIndex: bigint,
+  ): void {
+    this.as(actor, {
+      low_value: lowValue,
+      low_next: lowNext,
+      low_index: lowIndex,
+    });
+    this.circuitContext = this.contract.impureCircuits.revoke(
+      this.circuitContext,
+      handle,
+      lowValue,
+      lowNext,
+    ).context;
   }
 
   proposeIssuerAs(actor: User, newIssuer: User): void {
@@ -228,47 +263,61 @@ export class CredentialZkSimulator {
     ).context;
   }
 
-  // --- holder proofs ---
-  proveIssuedAs(holder: User): void {
+  // --- holder proof (single bound presentation) ---
+  // Returns the disclosed session nullifier. Membership (issued) and non-membership (not
+  // revoked) are checked atomically over ONE credential opening, so a revoked holder cannot
+  // mix a real "issued" opening with a fabricated "not-revoked" handle (H1).
+  provePresentationAs(
+    holder: User,
+    sessionNonce: Uint8Array,
+    overrides: Partial<CredentialZkPrivateState> = {},
+  ): Uint8Array {
     const cm = this.commitmentFor(holder);
     const idx = this.issuedIndex.get(toHex(cm));
     if (idx === undefined) {
-      throw new Error("proveIssuedAs: holder has no issued credential.");
+      throw new Error("provePresentationAs: holder has no issued credential.");
     }
-    this.as(holder, { issued_index: idx });
-    this.circuitContext = this.contract.impureCircuits.proveIssued(
-      this.circuitContext,
-    ).context;
-  }
-
-  proveNotRevokedAs(holder: User): void {
     const low = this.findLow(holder.handle); // throws if the handle is revoked
     this.as(holder, {
+      issued_index: idx,
       low_value: low.value,
       low_next: low.next,
       low_index: low.index,
+      ...overrides,
     });
-    this.circuitContext = this.contract.impureCircuits.proveNotRevoked(
+    const res = this.contract.impureCircuits.provePresentation(
       this.circuitContext,
-    ).context;
+      sessionNonce,
+    );
+    this.circuitContext = res.context;
+    return res.result;
   }
 
-  // Adversarial: force a non-revocation proof with caller-chosen low-leaf coordinates. Used to
-  // confirm the CIRCUIT (not just the simulator) rejects a forged bracket for a revoked handle.
-  proveNotRevokedForged(
+  // Adversarial: present with caller-chosen low-leaf coordinates (does NOT consult findLow, so
+  // it works even for a revoked handle). Confirms the CIRCUIT itself rejects a forged bracket.
+  provePresentationForged(
     holder: User,
+    sessionNonce: Uint8Array,
     lowValue: bigint,
     lowNext: bigint,
     lowIndex: bigint,
-  ): void {
+    overrides: Partial<CredentialZkPrivateState> = {},
+  ): Uint8Array {
+    const cm = this.commitmentFor(holder);
+    const idx = this.issuedIndex.get(toHex(cm)) ?? 0n;
     this.as(holder, {
+      issued_index: idx,
       low_value: lowValue,
       low_next: lowNext,
       low_index: lowIndex,
+      ...overrides,
     });
-    this.circuitContext = this.contract.impureCircuits.proveNotRevoked(
+    const res = this.contract.impureCircuits.provePresentation(
       this.circuitContext,
-    ).context;
+      sessionNonce,
+    );
+    this.circuitContext = res.context;
+    return res.result;
   }
 
   // --- reads ---
