@@ -11,7 +11,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "compact": "compact compile contracts/nft/src/nft.compact contracts/managed/nft && compact compile contracts/nft-zk/src/nft-zk.compact contracts/managed/nft-zk",
+    "compact": "compact compile contracts/nft/src/nft.compact contracts/managed/nft && compact compile contracts/nft-zk/src/nft-zk.compact contracts/managed/nft-zk && yarn compact:credential-zk",
+    "compact:credential-zk": "compact compile +0.31.0 contracts/credential-zk/src/credential-zk.compact contracts/managed/credential-zk",
     "test": "vitest run",
     "test:compile": "yarn compact && vitest run",
     "lint": "eslint contracts",
