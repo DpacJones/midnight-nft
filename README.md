@@ -1,5 +1,7 @@
 # midnight-nft
 
+> This project is built on the Midnight Network.
+
 Privacy-preserving (shielded) **NFT and credential primitives for Midnight**, written in [Compact](https://docs.midnight.network/). Two of the three contracts contain original contract logic built well beyond any example: a **zero-leakage shielded NFT** and a **soulbound credential primitive** that has been submitted as a Midnight Improvement Proposal.
 
 | | |
