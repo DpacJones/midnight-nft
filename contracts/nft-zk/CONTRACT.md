@@ -4,14 +4,14 @@
 
 The NFT-ZK (privacy-preserving non-fungible token) contract is a modular, privacy-focused NFT for the
 Midnight blockchain with **hidden ownership** using zero-knowledge proofs. Ownership is a per-token hash
-**commitment** rather than a public address, transfers are a two-step release/claim flow that records no
+**commitment** rather than a public address, transfers use a release then claim flow that records no
 sender to recipient link, and each token carries a public metadata URI. This document covers the **core
 module** that developers import and the **example contract** that adds a secret-derived admin.
 
 ## Modular pattern
 
-- **Module** (`./modules/NftZk.compact`): the reusable privacy-preserving NFT functionality you import.
-- **Example contract** (`nft-zk.compact`): shows how to wrap the module with a secret-derived admin.
+- **Module** (`src/modules/NftZk.compact`): the reusable privacy-preserving NFT functionality you import.
+- **Example contract** (`src/nft-zk.compact`): shows how to wrap the module with a secret-derived admin.
 - **Your implementation**: import the module and apply your own authorization pattern.
 
 ### The key distinction
@@ -69,11 +69,11 @@ The recipient builds this off-chain from a fresh `claim_salt` and shares only th
 Your TypeScript implementation provides:
 
 ```compact
-// module (NftZk.compact)
+// module: src/modules/NftZk.compact
 witness getLocalSecret(): Bytes<32>    // the owner's self secret (self-custody)
 witness getClaimSalt(): Bytes<32>      // the recipient's fresh per-claim salt
 
-// example contract (nft-zk.compact)
+// example contract: src/nft-zk.compact
 witness localSecretKey(): AdminSecretKey  // the admin secret; derives contractAdmin
 ```
 
@@ -97,7 +97,7 @@ witness localSecretKey(): AdminSecretKey  // the admin secret; derives contractA
 - `mint(claim_commitment: Bytes<32>, tokenId: Uint<64>, uri: Bytes<64>): []` — create a new token into a
   pending claim, with metadata. **Module only, unauthenticated. Wrap with your own authorization.**
 
-### Example contract circuits (`nft-zk.compact`)
+### Example contract circuits (`src/nft-zk.compact`)
 
 - `mintAdmin(claim_commitment: Bytes<32>, tokenId: Uint<64>, uri: Bytes<64>): []` — **[admin only]** mint
   into a recipient's claim commitment. Asserts `contractAdmin == deriveAdminPublicKey(localSecretKey())`.
