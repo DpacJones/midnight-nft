@@ -2,314 +2,148 @@
 
 ## Overview
 
-The NFT-ZK (Privacy-Preserving Non-Fungible Token) contract provides a modularized, privacy-focused implementation for the Midnight blockchain with **hidden ownership** using zero-knowledge proofs. This documentation covers the **core module** that developers import and the **usage example** that demonstrates admin authorization.
+The NFT-ZK (privacy-preserving non-fungible token) contract is a modular, privacy-focused NFT for the
+Midnight blockchain with **hidden ownership** using zero-knowledge proofs. Ownership is a per-token hash
+**commitment** rather than a public address, transfers are a two-step release/claim flow that records no
+sender to recipient link, and each token carries a public metadata URI. This document covers the **core
+module** that developers import and the **example contract** that adds a secret-derived admin.
 
-## Modular Pattern
+## Modular pattern
 
-This project follows a **modular architecture** designed for maximum flexibility:
+- **Module** (`./modules/NftZk.compact`): the reusable privacy-preserving NFT functionality you import.
+- **Example contract** (`nft-zk.compact`): shows how to wrap the module with a secret-derived admin.
+- **Your implementation**: import the module and apply your own authorization pattern.
 
-- 📦 **Module** (`./modules/NftZk.compact`): Core privacy-preserving NFT functionality that you import
-- 🔧 **Usage Example** (`nft-zk.compact`): Shows how to wrap module circuits with admin controls
-- 🎯 **Your Implementation**: Import the module and create your own authorization patterns
+### The key distinction
 
-### The Key Distinction
+The module exports its circuits with no authorization. The example contract chooses which to expose and
+adds admin gating. Importantly, the module defines a raw `mint` circuit, but the example contract **does
+not export it** (only the admin-gated `mintAdmin` is callable). Do not add `mint` to the wrapper export
+list, since it is unauthenticated.
 
-- **What you import**: The `NftZk` module with ALL circuits (`mint`, `burn`, `transfer`, etc.)
-- **What this file shows**: An example of wrapping mint/burn with admin authorization
-- **What you build**: Your own authorization logic around the module's circuits
+## Privacy model
 
-The module exports everything - including `mint` and `burn`. The main contract file (`nft-zk.compact`) is just one way to use those circuits, adding admin-only restrictions as an example.
+### Per-token owner commitment
 
-## Key Privacy Features
+Ownership is stored as:
 
-- **Anonymous Ownership**: Token ownership is hidden behind cryptographic hash keys
-- **Private Transfers**: Transfers don't reveal the actual public keys involved
-- **Selective Disclosure**: Owners can choose when to reveal ownership information
-- **Hash-Based Accounts**: Uses generated hash keys instead of direct public key mapping
-- **Dual Secret System**: Utilizes both local and shared secrets for different operations
-- **Admin Privacy**: Even admin operations maintain privacy of token ownership
-
-## The Core NFT-ZK Module
-
-**Path**: `./modules/NftZk.compact`
-
-This is what you'll **import into your projects**. The module exports ALL privacy-preserving NFT circuits including:
-
-- 🔄 **Transfer circuits**: `transfer`, `transferFrom`
-- ✅ **Approval circuits**: `approve`, `setApprovalForAll`
-- 🔍 **Query circuits**: `balanceOf`, `ownerOf`, `getApproved`, `isApprovedForAll`
-- 🔧 **Utility circuits**: `generateHashKey`
-- 🏭 **Core circuits**: `mint`, `burn` (yes, these are exported!)
-
-**Important**: The module exports `mint` and `burn` circuits. It's up to YOU to decide how to authorize them.
-
-## Public Functions
-
-### `balanceOf(owner: ZswapCoinPublicKey): Uint<64>`
-
-Returns the number of tokens owned by a given public key (privacy-preserving).
-
-**Privacy Note**: Uses different secrets based on whether you're checking your own balance or someone else's.
-
-**Parameters:**
-
-- `owner`: The public key to check the balance for
-
-**Returns:** The number of tokens owned
-
-### `ownerOf(tokenId: Uint<64>): Field`
-
-Returns the hash key of the owner of a given token ID.
-
-**Privacy Note**: Returns a hash key, not the actual public key.
-
-**Parameters:**
-
-- `tokenId`: The ID of the token to check
-
-**Returns:** The hash key of the token owner
-
-### `approve(to: ZswapCoinPublicKey, tokenId: Uint<64>): []`
-
-Approves another public key to transfer the specified token ID.
-
-**Privacy Note**: Creates approval using shared secret for the approved party.
-
-**Parameters:**
-
-- `to`: The public key to approve
-- `tokenId`: The token ID to approve for transfer
-
-### `getApproved(tokenId: Uint<64>): Field`
-
-Returns the approved hash key for a given token ID.
-
-**Parameters:**
-
-- `tokenId`: The token ID to check approvals for
-
-**Returns:** The approved hash key (or default if none)
-
-### `setApprovalForAll(operator: ZswapCoinPublicKey, approved: Boolean): []`
-
-Sets or unsets approval for an operator to manage all of the caller's tokens.
-
-**Privacy Note**: Uses hash of owner+operator combination for approval tracking.
-
-**Parameters:**
-
-- `operator`: The public key to set as operator
-- `approved`: Whether to approve or revoke operator status
-
-### `isApprovedForAll(ownerHashKey: Field, operatorHashKey: Field): Boolean`
-
-Checks if an operator is approved to manage all tokens of a given owner.
-
-**Parameters:**
-
-- `ownerHashKey`: The owner's hash key
-- `operatorHashKey`: The operator's hash key
-
-**Returns:** True if the operator is approved
-
-### `transfer(to: ZswapCoinPublicKey, tokenId: Uint<64>): []`
-
-Transfers ownership of a given token ID from the caller to another account.
-
-**Parameters:**
-
-- `to`: The recipient's public key
-- `tokenId`: The token ID to transfer
-
-### `transferFrom(fromHashKey: Field, to: ZswapCoinPublicKey, tokenId: Uint<64>): []`
-
-Transfers ownership of a given token ID from one hash key to another account.
-
-**Privacy Note**: Uses hash keys for the sender and generates appropriate hash key for recipient.
-
-**Parameters:**
-
-- `fromHashKey`: The current owner's hash key
-- `to`: The recipient's public key
-- `tokenId`: The token ID to transfer
-
-### `mintAdmin(to: ZswapCoinPublicKey, tokenId: Uint<64>): []`
-
-**[ADMIN ONLY]** Mints a new token with the specified token ID to the given public key.
-
-**Privacy Note**: Automatically chooses appropriate secret based on whether minting to admin or others.
-**Authorization**: Only the contract admin (deployer) can call this function.
-
-**Parameters:**
-
-- `to`: The recipient's public key
-- `tokenId`: The token ID to mint
-
-**Throws**: "Not authorized to mint." if caller is not the admin
-
-### `burnAdmin(tokenId: Uint<64>): []`
-
-**[ADMIN ONLY]** Burns (destroys) a specific token by its ID, regardless of who owns it.
-
-**Privacy Note**: Automatically retrieves the owner's hash key and performs the burn operation.
-**Authorization**: Only the contract admin (deployer) can call this function.
-
-**Parameters:**
-
-- `tokenId`: The token ID to burn
-
-**Throws**: "Not authorized to burn." if caller is not the admin
-
-### `generateHashKey(pK1: Bytes<32>, pK2: Bytes<32>): Field`
-
-Pure function to generate hash keys from two byte arrays.
-
-**Parameters:**
-
-- `pK1`: First public key bytes
-- `pK2`: Second public key bytes (secret)
-
-**Returns:** Generated hash key
-
-## Module Structure
-
-### Core NFT-ZK Module (`./modules/NftZk.compact`)
-
-The module exports ALL circuits - no restrictions:
-
-```compact
-// Export selected circuits from the NftZk module.
-// This example exports all circuits from the module even if
-// they have no authorization checks.
-export { 
-  balanceOf,
-  ownerOf,
-  approve,
-  getApproved,
-  setApprovalForAll,
-  isApprovedForAll,
-  transfer,
-  transferFrom,
-  generateHashKey,
-  mint,
-  burn
-};
+```
+persistentHash(["nftzk:owner:v1", pubkey, local_secret, tokenId])
 ```
 
-### Usage Example (`nft-zk.compact`)
+`tokenId` is folded in so that a holder's tokens each produce a **different** on-chain commitment, which
+means an observer cannot group a person's holdings (unlinkability). The commitment can only be reproduced
+by the holder, because it depends on `local_secret`, a witness that never leaves their device.
 
-This shows ONE way to use the module - with admin-only controls. The deployer's DApp generates the admin private key and stores it in private state. The contract derives the matching public key and stores it on the ledger, so the deployer's wallet identity is never recorded on-chain.
+### Claim (in-transit) commitment
 
-```compact
-pragma language_version >= 0.22.0;
+A token that is mid-transfer or freshly minted sits in a pending state under a claim commitment:
 
-import CompactStandardLibrary;
-import "./modules/NftZk";
-
-// Export selected circuits from the NftZk module.
-// We aren't exporting 'burn' or 'mint' because they have no authorization checks.
-export {
-  balanceOf,
-  ownerOf,
-  approve,
-  getApproved,
-  setApprovalForAll,
-  isApprovedForAll,
-  transfer,
-  transferFrom,
-  generateHashKey
-};
-
-struct AdminSecretKey { bytes: Bytes<32>; }
-struct AdminPublicKey { bytes: Bytes<32>; }
-
-export ledger contractAdmin: AdminPublicKey;
-
-witness getAdminSecret(): AdminSecretKey;
-
-constructor() {
-  contractAdmin = disclose(deriveAdminPublicKey(getAdminSecret()));
-}
-
-export circuit deriveAdminPublicKey(sk: AdminSecretKey): AdminPublicKey {
-  return AdminPublicKey {
-    bytes: persistentHash<Vector<2, Bytes<32>>>([pad(32, "nftzk:admin:pk:v1"), sk.bytes])
-  };
-}
-
-// Example: Only Admin can mint tokens.
-export circuit mintAdmin(to: ZswapCoinPublicKey, tokenId: Uint<64>): [] {
-  assert(contractAdmin == deriveAdminPublicKey(getAdminSecret()), "Not authorized to mint.");
-  mint(to, tokenId);
-}
-
-// Example: Only admin can burn tokens.
-export circuit burnAdmin(tokenId: Uint<64>): [] {
-  assert(contractAdmin == deriveAdminPublicKey(getAdminSecret()), "Not authorized to burn.");
-  const tokenOwnerHashKey = ownerOf(tokenId);
-  burn(tokenOwnerHashKey, tokenId);
-}
-
-// Example: Rotate the admin key. Share only the derived public key with the
-// current admin so private keys never leave the device that generated them.
-export circuit rotateAdmin(newAdmin: AdminPublicKey): [] {
-  assert(contractAdmin == deriveAdminPublicKey(getAdminSecret()), "Not authorized to rotate admin.");
-  contractAdmin = disclose(newAdmin);
-}
+```
+persistentHash(["nftzk:claim:v1", recipient_pubkey, claim_salt])
 ```
 
-**This is just an example!** You could create:
-- Private minting with payment proofs
-- Role-based privacy authorization
-- Time-locked private operations
-- Anonymous governance
-- Any privacy-preserving authorization pattern you need
+The recipient builds this off-chain from a fresh `claim_salt` and shares only the commitment.
 
-## Privacy Architecture
+### Design choices
 
-### Hash Key Generation
+- **No on-chain `balanceOf`.** A stable per-user count would itself be a linkability leak, so balance and
+  enumeration are handled offline by the wallet (recompute owner commitments locally, compare to the
+  indexer's public state).
+- **Metadata is public.** Each token has a `tokenUri` (`Bytes<64>`), set at mint and carried through
+  transfers, removed on burn. It is intentionally public, since you want to display an NFT.
+- **Approvals are not included.** This variant has no `approve` / `transferFrom` / operator model. Access
+  is proof of the owner or claim secret.
 
-The contract uses a dual-secret system for privacy:
+## Ledger state
 
-- **Local Secret**: Used for self-operations (minting to self, checking own balance)
-- **Shared Secret**: Used for operations involving other parties (approvals, transfers to others)
+| Field | Type | Meaning |
+|---|---|---|
+| `tokenOwner` | `Map<Uint<64>, Bytes<32>>` | tokenId to owner commitment |
+| `pendingClaims` | `Map<Uint<64>, Bytes<32>>` | tokenId to claim commitment (in transit) |
+| `tokenUri` | `Map<Uint<64>, Bytes<64>>` | tokenId to public metadata URI |
+| `contractAdmin` | `AdminPublicKey` | derived admin public key (example contract) |
 
-### Key Privacy Features
+## Witnesses
 
-- **Anonymous Ownership**: Token ownership is hidden behind cryptographic hash keys
-- **Private Transfers**: Transfers don't reveal the actual public keys involved
-- **Selective Disclosure**: Owners can choose when to reveal ownership information
-- **Hash-Based Accounts**: Uses generated hash keys instead of direct public key mapping
-- **Dual Secret System**: Utilizes both local and shared secrets for different operations
-- **Admin Privacy**: Even admin operations maintain privacy of token ownership
-
-### Required Witnesses
-
-Your Typescript implementation must provide three witness functions:
+Your TypeScript implementation provides:
 
 ```compact
-witness getLocalSecret(): Bytes<32>     // For self-operations
-witness getSharedSecret(): Bytes<32>    // For operations with others
-witness getAdminSecret(): AdminSecretKey // For deployer-only admin operations
+// module (NftZk.compact)
+witness getLocalSecret(): Bytes<32>    // the owner's self secret (self-custody)
+witness getClaimSalt(): Bytes<32>      // the recipient's fresh per-claim salt
+
+// example contract (nft-zk.compact)
+witness localSecretKey(): AdminSecretKey  // the admin secret; derives contractAdmin
 ```
 
-## Privacy Considerations
+## Circuit reference
 
-1. **Secret Management**: Properly secure and manage local and shared secrets
-2. **Hash Key Tracking**: Keep track of hash keys for your owned tokens
-3. **Selective Disclosure**: Carefully consider when to reveal ownership information
-4. **Cross-Contract Privacy**: Ensure privacy is maintained across contract interactions
-5. **Admin Privacy**: Admin operations don't reveal token ownership details
+### Module circuits
 
-## Security Considerations
+- `commitOwner(pk: Bytes<32>, secret: Bytes<32>, tokenId: Uint<64>): Bytes<32>` — pure. Build a per-token
+  owner commitment.
+- `commitClaim(pk: Bytes<32>, salt: Bytes<32>): Bytes<32>` — pure. Build a claim commitment.
+- `tokenExists(tokenId: Uint<64>): Boolean` — whether a token is owned or pending.
+- `ownerOf(tokenId: Uint<64>): Bytes<32>` — the owner commitment of an owned token (a hash, reveals no
+  identity and links no tokens).
+- `pendingOf(tokenId: Uint<64>): Bytes<32>` — the claim commitment of a pending token.
+- `uriOf(tokenId: Uint<64>): Bytes<64>` — the token's metadata URI.
+- `release(tokenId: Uint<64>, claim_commitment: Bytes<32>): []` — the owner proves ownership (re-derives
+  their commitment and checks it matches the stored one) and moves the token into a pending claim.
+- `claim(tokenId: Uint<64>): []` — the recipient proves they are the party behind the claim commitment and
+  takes ownership under their own owner commitment.
+- `burn(tokenId: Uint<64>): []` — the owner burns their own token and its metadata.
+- `mint(claim_commitment: Bytes<32>, tokenId: Uint<64>, uri: Bytes<64>): []` — create a new token into a
+  pending claim, with metadata. **Module only, unauthenticated. Wrap with your own authorization.**
 
-1. **Admin Authorization**: All minting and burning operations require admin authorization
-2. **Module Encapsulation**: Raw mint/burn functions are not exposed publicly
-3. **Witness Security**: Ensure witness functions are implemented securely
-4. **Secret Storage**: Store secrets securely and never expose them
-5. **Hash Collision**: While extremely unlikely, be aware of potential hash collisions
-6. **Authorization**: Verify proper authorization before sensitive operations
+### Example contract circuits (`nft-zk.compact`)
+
+- `mintAdmin(claim_commitment: Bytes<32>, tokenId: Uint<64>, uri: Bytes<64>): []` — **[admin only]** mint
+  into a recipient's claim commitment. Asserts `contractAdmin == deriveAdminPublicKey(localSecretKey())`.
+- `rotateAdmin(newAdmin: AdminPublicKey): []` — **[admin only]** hand issuance authority to a new admin
+  public key (the new admin generates their secret locally and shares only the derived public key).
+- `deriveAdminPublicKey(sk: AdminSecretKey): AdminPublicKey` — pure. Derive the admin public key from the
+  admin secret, domain-separated to this contract (`nftzk:admin:pk:v1`).
+
+## Transfer flow
+
+```
+recipient: build claim_commitment = commitClaim(recipient_pubkey, fresh claim_salt)  (off-chain)
+owner:     release(tokenId, claim_commitment)   -> token moves to pendingClaims
+recipient: claim(tokenId)                        -> token moves to tokenOwner under recipient's commitment
+```
+
+The chain records only that a token changed state, never who released or claimed it.
+
+## Admin model
+
+The deployer becomes the initial admin. The deployer's DApp generates an admin private key, keeps it in
+private state, and the contract stores **only** the derived public key on the ledger. Admin authorization
+is proof of knowledge of the admin secret: each admin circuit re-derives the public key from the
+prover-held secret and checks it equals `contractAdmin`. An attacker who reads `contractAdmin` off the
+ledger cannot reverse the hash to recover the secret, so they cannot satisfy the gate.
+
+Authorization does **not** use `ownPublicKey()`. `ownPublicKey()` is a prover-supplied witness, not the
+transaction signer, so it is not a trustworthy caller identity and must not be used for authorization on
+its own. This is the single most important Compact authorization trap.
+
+## Security considerations
+
+1. **`ownPublicKey()` is a witness, not `msg.sender`.** Never authorize with it alone. Use secret-derived
+   keys and commitment checks.
+2. **Witnesses are untrusted input.** Constrain every witness value against on-chain state before trusting
+   it.
+3. **Domain separation.** All commitments are domain-separated (`nftzk:owner:v1`, `nftzk:claim:v1`,
+   `nftzk:admin:pk:v1`) so values are not interchangeable across purposes or sibling contracts.
+4. **Fresh claim salt per transfer.** Reusing a salt links two pending claims to the same recipient during
+   the pending window. Wallets must generate a fresh salt per incoming transfer.
+5. **No on-chain balance.** Enumeration is offline by design, avoiding a linkability leak.
+6. **Releasing to a malformed commitment can lock a token.** UIs must validate the recipient commitment
+   before `release`.
+
+See [KNOWN_LIMITATIONS.md](./KNOWN_LIMITATIONS.md) for the full honest caveat list.
 
 ## License
 
-This contract is licensed under GPL-3.0. See the license header in the source file for full details.
+Apache-2.0. See the license headers in the source files and the repository [LICENSE](../../LICENSE).
