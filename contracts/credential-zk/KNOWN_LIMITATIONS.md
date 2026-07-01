@@ -6,8 +6,9 @@
 
 # Credential-ZK (MIP-A) — Known Limitations
 
-Status: **v3 reference implementation. Compile-verified (compactc 0.31.0 / language 0.23.0) with 28
-in-process tests including adversarial cases.** The core state machine is sound: secret-derived issuer
+Status: **v3 reference implementation.** Per the MIP and commit history, the contract compiles on
+compactc 0.31.0 / language 0.23.0 and passes 28 in-process tests including adversarial cases (not
+re-verified as part of this docs-only change). The core state machine is sound: secret-derived issuer
 authority, holder-built hiding commitments, a single bound presentation (issued ∧ not-revoked over one
 opening), a path-derived revoke index, and a two-step rotation that cannot brick authority. The items
 below are logged honestly so nobody mistakes the current state for "finished." Cross-refs: the normative

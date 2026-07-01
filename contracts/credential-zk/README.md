@@ -98,9 +98,10 @@ yarn test:compile
 yarn test
 ```
 
-Compiled with `compactc 0.31.0` / language `0.23.0` (`pragma language_version >= 0.23`). On Windows note
-that `compact` may collide with the built-in `C:\Windows\System32\compact.exe`; ensure the Compact
-toolchain resolves first.
+Targets `compactc 0.31.0` / language `0.23.0` (`pragma language_version >= 0.23`); see the
+[MIP](./MIP-A-soulbound-credential-primitive.md) for the upstream compile and test verification. On
+Windows note that `compact` may collide with the built-in `C:\Windows\System32\compact.exe`; ensure the
+Compact toolchain resolves first.
 
 ## License
 
